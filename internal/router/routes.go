@@ -8,6 +8,7 @@ import (
 func SetUpRoutes(app *app.Application) *chi.Mux {
 	r := chi.NewRouter()
 
+	r.Post("/users/register/", app.UserHandler.HandleRegister)
 	
 	return r
 }

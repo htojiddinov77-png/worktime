@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"time"
-
 )
 
 type PostgresWorkSessionStore struct {
@@ -17,13 +16,13 @@ func NewPostgresWorktimeStore(db *sql.DB) *PostgresWorkSessionStore {
 }
 
 type WorkSession struct {
-	Id        int       `json:"id"`
-	UserId    int       `json:"user_id"`
-	ProjectId int       `json:"project_id"`
-	StartAt   time.Time `json:"start_at"`
-	EndAt     time.Time `json:"end_at"`
-	Note      string    `json:"note"`
-	CreatedAt time.Time `json:"created_at"`
+	Id        int64      `json:"id"`
+	UserId    int64      `json:"user_id"`
+	ProjectId int64      `json:"project_id"`
+	StartAt   time.Time  `json:"start_at"`
+	EndAt     *time.Time `json:"end_at"`
+	Note      string     `json:"note"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 type WorkSessionStore interface {
@@ -37,7 +36,7 @@ func (pg *PostgresWorkSessionStore) StartSession(worksession *WorkSession) error
 	VALUES($1, $2, $3, NOW())
 	Returning id, start_at`
 
-	err := pg.db.QueryRow(query, worksession.UserId, worksession.ProjectId, worksession.Note,).Scan(&worksession.Id, &worksession.StartAt)
+	err := pg.db.QueryRow(query, worksession.UserId, worksession.ProjectId, worksession.Note).Scan(&worksession.Id, &worksession.StartAt)
 	if err != nil {
 		return err
 	}

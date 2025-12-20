@@ -72,3 +72,86 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJson(w, http.StatusCreated, utils.Envelope{"user": user})
 
 }
+
+
+func (uh *UserHandler) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
+	userID, err := utils.ReadIdParam(r)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid id"})
+		return
+	}
+
+	existingUser, err := uh.userStore.GetUserById(userID)
+	if err != nil {
+		uh.logger.Println("GetUserByEmail error:", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	if existingUser == nil {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		return
+	}
+
+	type changePasswordRequest struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+
+	var req changePasswordRequest
+
+	err = json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		uh.logger.Println("Error while decoding")
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid request payload"})
+		return
+	}
+
+	if req.OldPassword == "" || req.NewPassword == "" {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "password is empty"})
+		return
+	}
+
+	oldUserPassword, err := uh.userStore.GetUserById(userID)
+	if err != nil {
+		uh.logger.Println("GetUserByEmail error:", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	if oldUserPassword == nil {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		return
+	}
+
+	passwordsDomatch, err := oldUserPassword.PasswordHash.Matches(req.OldPassword)
+	if err != nil {
+		uh.logger.Println("Error while comparing passwords")
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	if !passwordsDomatch {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "unauthorized"})
+		return
+	}
+
+	err = oldUserPassword.PasswordHash.Set(req.NewPassword)
+	if err != nil {
+		uh.logger.Println("Error: hashing password")
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	err = uh.userStore.UpdateUser(oldUserPassword)
+	if err != nil {
+		uh.logger.Println("Error: while updating user")
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "password changed successfully"})
+}
+
+
+

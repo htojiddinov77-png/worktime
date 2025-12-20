@@ -38,7 +38,7 @@ func (p *password) Matches(plainTextPassword string) (bool,error) {
 }
 
 type User struct {
-	Id           int       `json:"id"`
+	Id           int64    `json:"id"`
 	Name         string    `json:"name"`
 	Email        string    `json:"email"`
 	PasswordHash password  `json:"-"`
@@ -61,6 +61,8 @@ type UserStore interface{
 	CreateUser(*User) error
 	GetUserById(id int64) (*User, error)
 	GetUserByEmail(email string) (*User, error)
+	UpdateUser(user *User) error
+	DisableUser(id int64) error
 }
 
 
@@ -135,3 +137,29 @@ func (pg *PostgresUserStore) GetUserByEmail(email string) (*User, error) {
 	}
 	return user,nil
 }
+
+func (pg *PostgresUserStore) UpdateUser(user *User) error {
+
+	query := `UPDATE users
+	SET name = $1, email = $2, password_hash = $3, role = $4, updated_at = NOW()
+	WHERE id = $5`
+	_, err := pg.db.Exec(query, user.Name, user.Email, user.PasswordHash.hash, user.Role, user.Id)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (pg *PostgresUserStore) DisableUser(id int64) error {
+	query := `UPDATE users
+	SET is_active = false
+	WHERE id = $1`
+
+	_, err := pg.db.Exec(query, id)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+

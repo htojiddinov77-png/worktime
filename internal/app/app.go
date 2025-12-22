@@ -42,7 +42,7 @@ func NewApplication() (*Application, error) {
 
 	// Handlers
 	userHandler := api.NewUserHandler(userStore, logger)
-	projectHandler := api.NewProjectHandler(projectStore, logger)
+	projectHandler := api.NewProjectHandler(projectStore, userStore, logger)
 	workSessionHandler := api.NewWorkSessionHandler(workSessionStore, userStore, logger, middleware.Middleware{JWT: jwtManager})
 	tokenHandler := api.NewTokenHandler(userStore, jwtManager, logger)
 

@@ -51,15 +51,18 @@ func (th *TokenHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
-	if !existingUser.IsActive{
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "user is inactive"})
-	}
 
 	if existingUser == nil {
 		// same message as wrong password prevents user enumeration
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
+
+	if !existingUser.IsActive{
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "user is inactive"})
+	}
+
+
 
 	matches, err := existingUser.PasswordHash.Matches(req.Password)
 	if err != nil {

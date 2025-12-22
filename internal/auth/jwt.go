@@ -25,7 +25,6 @@ type JWTManager struct {
 func NewJWTManager() *JWTManager {
 	secret := os.Getenv("WORKTIME_JWT_SECRET")
 	if secret == "" {
-		// dev fallback only — set WORKTIME_JWT_SECRET in real env
 		secret = "change-me-in-env-worktime-jwt-secret"
 	}
 
@@ -36,7 +35,6 @@ func NewJWTManager() *JWTManager {
 	}
 }
 
-// Optional helper if you want to configure issuer/ttl explicitly.
 
 
 func (j *JWTManager) CreateToken(userID int64, email, role string) (string, error) {

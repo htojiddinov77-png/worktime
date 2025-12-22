@@ -57,20 +57,29 @@ type WorkSessionFilter struct {
 	Offset int
 }
 
+type DailySummary struct {
+    Date          string `json:"date"` 
+    UserID        int64  `json:"user_id"`
+    TotalSessions int    `json:"total_sessions"`
+    TotalMinutes  int    `json:"total_minutes"`
+}
+
+
 type WorkSessionStore interface {
 	StartSession(*WorkSession) error
 	StopSession(id int64) error
-
+	GetDailySummary(userID *int64, date time.Time) ([]DailySummary, error)
 	ListSessions(filter WorkSessionFilter) ([]WorkSessionRow, error)
 }
 
 func (pg *PostgresWorkSessionStore) StartSession(worksession *WorkSession) error {
 	query := `
-	INSERT INTO work_sessions(user_id, project_id, note, start_at)
-	VALUES($1, $2, $3, NOW())
-	Returning id, start_at`
+	INSERT INTO work_sessions(user_id, project_id, note, start_at, created_at)
+	VALUES($1, $2, $3, NOW(), NOW())
+	RETURNING id, start_at, created_at;
+ `
 
-	err := pg.db.QueryRow(query, worksession.UserId, worksession.ProjectId, worksession.Note).Scan(&worksession.Id, &worksession.StartAt)
+	err := pg.db.QueryRow(query, worksession.UserId, worksession.ProjectId, worksession.Note).Scan(&worksession.Id, &worksession.StartAt, &worksession.CreatedAt)
 	if err != nil {
 		return err
 	}
@@ -212,6 +221,53 @@ func (pg *PostgresWorkSessionStore) ListSessions(filter WorkSessionFilter) ([]Wo
 	return out, nil
 }
 
+func (pg *PostgresWorkSessionStore) GetDailySummary(userID *int64, date time.Time) ([]DailySummary, error) {
+    dayStart := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+    dayEnd := dayStart.Add(24 * time.Hour)
 
+    // We count sessions that start within the day.
+    // Minutes = difference between end_at and start_at; if end_at is null, use NOW().
+    base := `
+        SELECT
+            to_char($1::timestamptz, 'YYYY-MM-DD') AS day,
+            ws.user_id,
+            COUNT(*) AS total_sessions,
+            COALESCE(SUM(
+                GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ws.end_at, NOW()) - ws.start_at)) / 60)
+            ), 0)::int AS total_minutes
+        FROM work_sessions ws
+        WHERE ws.start_at >= $1 AND ws.start_at < $2
+    `
+    args := []any{dayStart, dayEnd}
+    argPos := 3
 
+    if userID != nil {
+        base += fmt.Sprintf(" AND ws.user_id = $%d", argPos)
+        args = append(args, *userID)
+        argPos++
+    }
 
+    base += `
+        GROUP BY ws.user_id
+        ORDER BY ws.user_id ASC
+    `
+
+    rows, err := pg.db.Query(base, args...)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var out []DailySummary
+    for rows.Next() {
+        var s DailySummary
+        if err := rows.Scan(&s.Date, &s.UserID, &s.TotalSessions, &s.TotalMinutes); err != nil {
+            return nil, err
+        }
+        out = append(out, s)
+    }
+    if err := rows.Err(); err != nil {
+        return nil, err
+    }
+    return out, nil
+}

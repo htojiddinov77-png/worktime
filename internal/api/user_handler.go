@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"regexp"
 
 	"github.com/htojiddinov77-png/worktime/internal/middleware"
 	"github.com/htojiddinov77-png/worktime/internal/store"
@@ -39,6 +40,12 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	if !emailRegex.MatchString(req.Email) {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid email"})
+		return
+	}
+
 	existingUser, err := uh.userStore.GetUserByEmail(req.Email)
 	if err != nil {
 		uh.logger.Println("Error while getting user:")
@@ -54,6 +61,7 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	user := &store.User{
 		Name: req.Name,
 		Email: req.Email,
+		IsActive: true,
 	}
 
 	err = user.PasswordHash.Set(req.Password)

@@ -12,7 +12,7 @@ func NewPostgresProjectStore(db *sql.DB) *PostgresProjectStore {
 
 type Project struct {
 	Id       int64    `json:"id"`
-	Name     string `json:"name"`
+	Name     string   `json:"name"`
 	StatusId int64   `json:"status_id"`
 }
 
@@ -38,30 +38,30 @@ func (pg PostgresProjectStore) CreateProject(project *Project) error {
 }
 
 func (pg *PostgresProjectStore) ListProjects() ([]Project, error) {
-    query := `
-        SELECT id, name, status_id
-        FROM projects
-        ORDER BY name ASC, id ASC
-    `
-    rows, err := pg.db.Query(query)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
+	query := `
+		SELECT id, COALESCE(name, '') AS name
+		FROM projects
+		ORDER BY name ASC, id ASC
+	`
 
-    var out []Project
-    for rows.Next() {
-        var p Project
-        if err := rows.Scan(&p.Id, &p.Name, &p.StatusId); err != nil {
-            return nil, err
-        }
-        out = append(out, p)
-    }
-    if err := rows.Err(); err != nil {
-        return nil, err
-    }
-    return out, nil
+	rows, err := pg.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Project
+	for rows.Next() {
+		var p Project
+		if err := rows.Scan(&p.Id, &p.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }
-
-
-

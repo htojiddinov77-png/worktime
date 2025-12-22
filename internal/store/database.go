@@ -4,16 +4,29 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"os"
+
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/pressly/goose/v3"
 )
 
 func Open() (*sql.DB, error) {
-	db, err := sql.Open("pgx", "host=localhost user=postgres password=postgres dbname=worktime port=5432 sslmode=disable")
+	dsn := os.Getenv("WORKTIME_DB_DSN")
+	if dsn == "" {
+		return nil, fmt.Errorf("WORKTIME_DB_DSN is not set")
+	}
+
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("db: open %w", err)
 	}
+	
+	err = db.Ping()
+	if err != nil {
+		return nil, fmt.Errorf("db: ping %w", err)
+	}
+	
 
 	fmt.Println("Connected to database....")
 	return db, nil

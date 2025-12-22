@@ -59,7 +59,7 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 
 	err = wh.workSessionStore.StartSession(ws)
 	if err != nil {
-		wh.logger.Println("Error starting session:")
+		wh.logger.Printf("Error starting session: %v", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
@@ -254,4 +254,57 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 		"count":    len(rows),
 	})
 }
+
+func (rh *WorkSessionHandler) HandleDailyReport(w http.ResponseWriter, r *http.Request) {
+    authUserID, ok := middleware.GetUserID(r)
+    if !ok {
+        utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+        return
+    }
+    role, _ := middleware.GetUserRole(r)
+
+    // date=YYYY-MM-DD (simple for frontend)
+    dateStr := strings.TrimSpace(r.URL.Query().Get("date"))
+    if dateStr == "" {
+        utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "missing date (YYYY-MM-DD)"})
+        return
+    }
+
+    date, err := time.Parse("2006-01-02", dateStr)
+    if err != nil {
+        utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid date (YYYY-MM-DD)"})
+        return
+    }
+
+    // admin can optionally pass user_id; non-admin always self
+    var uidPtr *int64
+    if role != "admin" {
+        uidPtr = &authUserID
+    } else {
+        // optional: ?user_id=123
+        if s := strings.TrimSpace(r.URL.Query().Get("user_id")); s != "" {
+            v, err := strconv.ParseInt(s, 10, 64)
+            if err != nil || v <= 0 {
+                utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid user_id"})
+                return
+            }
+            uidPtr = &v
+        }
+    }
+
+    summary, err := rh.workSessionStore.GetDailySummary(uidPtr, date)
+    if err != nil {
+        rh.logger.Println("GetDailySummary error:", err)
+        utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+        return
+    }
+
+    utils.WriteJson(w, http.StatusOK, utils.Envelope{
+        "date":    dateStr,
+        "summary": summary,
+        "count":   len(summary),
+    })
+}
+
+
 

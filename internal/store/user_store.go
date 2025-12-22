@@ -45,7 +45,7 @@ type User struct {
 	Email        string    `json:"email"`
 	PasswordHash password  `json:"-"`
 	Role         string    `json:"role"`
-	IsActive     bool      `json:"is_active"`
+	IsActive     bool      `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -64,14 +64,14 @@ type UserStore interface {
 	GetUserByEmail(email string) (*User, error)
 	UpdateUser(user *User) error
 	DisableUser(id int64) error
-	ListUsers() ([]User,error)
+	ListUsers() ([]User, error)
 }
 
 func (pg *PostgresUserStore) CreateUser(user *User) error {
 	query := `
-		INSERT INTO users (name, email, password_hash, role, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-		RETURNING id, created_at, updated_at
+		INSERT INTO users (name, email, password_hash, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+		RETURNING id, created_at;
 	`
 
 	err := pg.db.QueryRow(
@@ -79,9 +79,8 @@ func (pg *PostgresUserStore) CreateUser(user *User) error {
 		user.Name,
 		user.Email,
 		string(user.PasswordHash.hash),
-		user.Role,
 		user.IsActive,
-	).Scan(&user.Id, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.Id, &user.CreatedAt)
 
 	if err != nil {
 		return err
@@ -124,7 +123,7 @@ func (pg *PostgresUserStore) GetUserByEmail(email string) (*User, error) {
 	user := &User{}
 
 	query := `
-		SELECT id, name, email, password_hash, role, is_active, created_at, updated_at
+		SELECT id, name, email, password_hash, role, is_active, created_at
 		FROM users
 		WHERE email = $1
 	`
@@ -137,7 +136,6 @@ func (pg *PostgresUserStore) GetUserByEmail(email string) (*User, error) {
 		&user.Role,
 		&user.IsActive,
 		&user.CreatedAt,
-		&user.UpdatedAt,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -189,35 +187,35 @@ func (pg *PostgresUserStore) DisableUser(id int64) error {
 }
 
 func (pg *PostgresUserStore) ListUsers() ([]User, error) {
-    query := `
+	query := `
         SELECT id, name, email, role, is_active, created_at, updated_at
         FROM users
         ORDER BY id ASC
     `
-    rows, err := pg.db.Query(query)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
+	rows, err := pg.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-    var out []User
-    for rows.Next() {
-        var u User
-        if err := rows.Scan(
-            &u.Id,
-            &u.Name,
-            &u.Email,
-            &u.Role,
-            &u.IsActive,
-            &u.CreatedAt,
-            &u.UpdatedAt,
-        ); err != nil {
-            return nil, err
-        }
-        out = append(out, u)
-    }
-    if err := rows.Err(); err != nil {
-        return nil, err
-    }
-    return out, nil
+	var out []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(
+			&u.Id,
+			&u.Name,
+			&u.Email,
+			&u.Role,
+			&u.IsActive,
+			&u.CreatedAt,
+			&u.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

@@ -4,37 +4,50 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
+
+	"github.com/joho/godotenv"
 
 	"github.com/htojiddinov77-png/worktime/internal/app"
 	"github.com/htojiddinov77-png/worktime/internal/router"
 )
 
 func main() {
-	var port int
-	flag.IntVar(&port, "port", 4000, "backend port")
+	// Load .env (local development only)
+	_ = godotenv.Load()
+
+	// Default port from env
+	envPort := 4000
+	if p := os.Getenv("WORKTIME_PORT"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil {
+			envPort = parsed
+		}
+	}
+
+	// CLI flag overrides env
+	port := flag.Int("port", envPort, "backend port")
 	flag.Parse()
 
-	app, err := app.NewApplication()
+	application, err := app.NewApplication()
 	if err != nil {
 		panic(err)
 	}
 
-	routes := router.SetUpRoutes(app)
-
+	routes := router.SetUpRoutes(application)
 
 	server := &http.Server{
-		Addr: fmt.Sprintf(":%d", port),
-		Handler: routes,
-		IdleTimeout: time.Minute,
-		ReadTimeout: 10 * time.Second,
+		Addr:         fmt.Sprintf(":%d", *port),
+		Handler:      routes,
+		IdleTimeout:  time.Minute,
+		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
 
-	app.Logger.Printf("We are running on port %d", port)
+	application.Logger.Printf("Server running on port %d", *port)
 
-	err = server.ListenAndServe()
-	if err != nil {
-		app.Logger.Fatal(err)
+	if err := server.ListenAndServe(); err != nil {
+		application.Logger.Fatal(err)
 	}
 }

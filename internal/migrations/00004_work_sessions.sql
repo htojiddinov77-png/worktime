@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS work_sessions(
     start_at TIMESTAMPTZ NOT NULL,
     end_at TIMESTAMPTZ,
     note TEXT,
-    created_at TIMESTAMPTZ ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ
 )
 
 -- +goose StatementEnd

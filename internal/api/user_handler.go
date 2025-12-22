@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/htojiddinov77-png/worktime/internal/middleware"
 	"github.com/htojiddinov77-png/worktime/internal/store"
 	"github.com/htojiddinov77-png/worktime/internal/utils"
 )
@@ -75,23 +76,23 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 
 
 func (uh *UserHandler) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
-	userID, err := utils.ReadIdParam(r)
-	if err != nil {
-		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid id"})
-		return
-	}
+	userID, ok := middleware.GetUserID(r)
+    if !ok {
+        utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+        return
+    }
 
-	existingUser, err := uh.userStore.GetUserById(userID)
-	if err != nil {
-		uh.logger.Println("GetUserByEmail error:", err)
-		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
-		return
-	}
+    existingUser, err := uh.userStore.GetUserById(userID)
+    if err != nil {
+        uh.logger.Println("GetUserById error:", err)
+        utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+        return
+    }
 
-	if existingUser == nil {
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
-		return
-	}
+    if existingUser == nil {
+        utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+        return
+    }
 
 	type changePasswordRequest struct {
 		OldPassword string `json:"old_password"`
@@ -151,6 +152,48 @@ func (uh *UserHandler) HandleChangePassword(w http.ResponseWriter, r *http.Reque
 	}
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "password changed successfully"})
+}
+
+func (uh *UserHandler) HandleDisableUser(w http.ResponseWriter, r *http.Request) {
+	userID, err := utils.ReadIdParam(r)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "bad request"})
+		return
+	}
+
+	existingUser, err := uh.userStore.GetUserById(userID)
+	if err != nil {
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	if existingUser == nil {
+		utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "user doesn't exist"})
+		return
+	}
+
+	err = uh.userStore.DisableUser(existingUser.Id)
+	if err != nil {
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "user disabled successfully"})
+}
+
+func (uh *UserHandler) HandleAdminListUsers(w http.ResponseWriter, r *http.Request) {
+    // Route will be protected by RequireAdmin middleware, so we don’t re-check here.
+    users, err := uh.userStore.ListUsers()
+    if err != nil {
+        uh.logger.Println("ListUsers error:", err)
+        utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+        return
+    }
+
+    utils.WriteJson(w, http.StatusOK, utils.Envelope{
+        "users": users,
+        "count": len(users),
+    })
 }
 
 

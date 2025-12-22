@@ -6,6 +6,10 @@ type PostgresProjectStore struct {
 	db *sql.DB
 }
 
+func NewPostgresProjectStore(db *sql.DB) *PostgresProjectStore {
+	return &PostgresProjectStore{db: db}
+}
+
 type Project struct {
 	Id       int64    `json:"id"`
 	Name     string `json:"name"`
@@ -14,8 +18,10 @@ type Project struct {
 
 type ProjectStore interface {
 	CreateProject(*Project) error
-
+	ListProjects() ([]Project, error)
 }
+
+
 
 func (pg PostgresProjectStore) CreateProject(project *Project) error {
 	query := `
@@ -29,6 +35,32 @@ func (pg PostgresProjectStore) CreateProject(project *Project) error {
 	}
 
 	return nil
+}
+
+func (pg *PostgresProjectStore) ListProjects() ([]Project, error) {
+    query := `
+        SELECT id, name, status_id
+        FROM projects
+        ORDER BY name ASC, id ASC
+    `
+    rows, err := pg.db.Query(query)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var out []Project
+    for rows.Next() {
+        var p Project
+        if err := rows.Scan(&p.Id, &p.Name, &p.StatusId); err != nil {
+            return nil, err
+        }
+        out = append(out, p)
+    }
+    if err := rows.Err(); err != nil {
+        return nil, err
+    }
+    return out, nil
 }
 
 

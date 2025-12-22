@@ -3,40 +3,82 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"strings"
+
+	"github.com/htojiddinov77-png/worktime/internal/auth"
 )
 
 type contextKey string
 
-const userIDContextKey contextKey = "userID"
+const (
+	userIDContextKey   contextKey = "userID"
+	userRoleContextKey contextKey = "userRole"
+	// userEmailContextKey contextKey = "userEmail" // optional
+)
 
 type Middleware struct {
+	JWT *auth.JWTManager
 }
 
 func GetUserID(r *http.Request) (int64, bool) {
 	userID, ok := r.Context().Value(userIDContextKey).(int64)
-	return userID,ok
+	return userID, ok
 }
 
+func GetUserRole(r *http.Request) (string, bool) {
+	role, ok := r.Context().Value(userRoleContextKey).(string)
+	return role, ok
+}
+
+// func GetUserEmail(r *http.Request) (string, bool) { ... } // optional
 
 func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 1) Read Authorization header
+		if m == nil || m.JWT == nil {
+			http.Error(w, "server misconfigured", http.StatusInternalServerError)
+			return
+		}
+
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			http.Error(w, "missing auth header", http.StatusUnauthorized)
 			return
 		}
 
-		// 2) Parse and validate JWT (pseudo-code)
-		// token, err := jwt.Parse(...)
-		// userID := token.Claims["user_id"]
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			http.Error(w, "invalid authorization header", http.StatusUnauthorized)
+			return
+		}
 
-		userID := int64(42) // pretend extracted from JWT
+		tokenString := strings.TrimSpace(parts[1])
+		if tokenString == "" {
+			http.Error(w, "invalid authorization header", http.StatusUnauthorized)
+			return
+		}
 
-		// 3) Store userID in context
-		ctx := context.WithValue(r.Context(), userIDContextKey, userID)
+		claims, err := m.JWT.VerifyToken(tokenString)
+		if err != nil {
+			http.Error(w, "invalid or expired token", http.StatusUnauthorized)
+			return
+		}
 
-		// 4) Call next handler with updated context
+		// Store auth info in context
+		ctx := context.WithValue(r.Context(), userIDContextKey, claims.UserID)
+		ctx = context.WithValue(ctx, userRoleContextKey, claims.Role)
+		// ctx = context.WithValue(ctx, userEmailContextKey, claims.Email) // optional
+
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		role, ok := GetUserRole(r)
+		if !ok || role != "admin" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }

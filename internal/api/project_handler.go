@@ -89,3 +89,19 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 	})
 
 }
+
+
+func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Request) {
+    projects, err := ph.projectStore.ListProjects()
+    if err != nil {
+        ph.logger.Println("ListProjects error:", err)
+        utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+        return
+    }
+
+    utils.WriteJson(w, http.StatusOK, utils.Envelope{
+        "projects": projects,
+        "count":    len(projects),
+    })
+}
+

@@ -18,31 +18,34 @@ func (p *password) Set(plainTextPassword string) error {
 	if err != nil {
 		return err
 	}
-
 	p.plainText = &plainTextPassword
 	p.hash = hash
 	return nil
 }
 
-func (p *password) Matches(plainTextPassword string) (bool,error) {
+func (p *password) Matches(plainTextPassword string) (bool, error) {
+	if len(p.hash) == 0 {
+		return false, errors.New("missing password hash")
+	}
 	err := bcrypt.CompareHashAndPassword(p.hash, []byte(plainTextPassword))
 	if err != nil {
-		switch  {
+		switch {
 		case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
 			return false, nil
 		default:
 			return false, err
 		}
 	}
-	return true,nil
+	return true, nil
 }
 
 type User struct {
-	Id           int64    `json:"id"`
+	Id           int64     `json:"id"`
 	Name         string    `json:"name"`
 	Email        string    `json:"email"`
 	PasswordHash password  `json:"-"`
 	Role         string    `json:"role"`
+	IsActive     bool      `json:"is_active"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -52,114 +55,169 @@ type PostgresUserStore struct {
 }
 
 func NewPostgresUserStore(db *sql.DB) *PostgresUserStore {
-	return &PostgresUserStore{
-		db: db,
-	}
+	return &PostgresUserStore{db: db}
 }
 
-type UserStore interface{
+type UserStore interface {
 	CreateUser(*User) error
 	GetUserById(id int64) (*User, error)
 	GetUserByEmail(email string) (*User, error)
 	UpdateUser(user *User) error
 	DisableUser(id int64) error
+	ListUsers() ([]User,error)
 }
-
 
 func (pg *PostgresUserStore) CreateUser(user *User) error {
 	query := `
-	INSERT INTO users (name, email, password_hash, role, created_at, updated_at)
-	VALUES($1, $2, $3, $4, NOW(), NOW())
-	RETURNING id`
+		INSERT INTO users (name, email, password_hash, role, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		RETURNING id, created_at, updated_at
+	`
 
-	err := pg.db.QueryRow(query, user.Name, user.Email, user.PasswordHash.hash, user.Role, user.CreatedAt, user.UpdatedAt).Scan(&user.Id)
+	err := pg.db.QueryRow(
+		query,
+		user.Name,
+		user.Email,
+		string(user.PasswordHash.hash),
+		user.Role,
+		user.IsActive,
+	).Scan(&user.Id, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
-		return nil
+		return err
 	}
-
 	return nil
 }
 
-func (pg *PostgresUserStore) GetUserById(id int64) (*User,error) {
+func (pg *PostgresUserStore) GetUserById(id int64) (*User, error) {
 	user := &User{}
 
 	query := `
-	SELECT id, name, email, password_hash, role, created_at, updated_at
-	FROM users
-	WHERE id = $1`
-	
-	row := pg.db.QueryRow(query, id)
-	err := row.Scan(
+		SELECT id, name, email, password_hash, role, is_active, created_at, updated_at
+		FROM users
+		WHERE id = $1
+	`
+
+	var pwHash string
+	err := pg.db.QueryRow(query, id).Scan(
 		&user.Id,
 		&user.Name,
 		&user.Email,
-		&user.PasswordHash.hash,
+		&pwHash,
 		&user.Role,
+		&user.IsActive,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
 
-
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-
 	if err != nil {
 		return nil, err
 	}
 
-	return user,nil
+	return user, nil
 }
 
 func (pg *PostgresUserStore) GetUserByEmail(email string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, name, email, password_hash, role, created_at, updated_at
-	FROM users
-	WHERE email = $1`
 
-	row := pg.db.QueryRow(query, email)
-	err := row.Scan(
+	query := `
+		SELECT id, name, email, password_hash, role, is_active, created_at, updated_at
+		FROM users
+		WHERE email = $1
+	`
+
+	err := pg.db.QueryRow(query, email).Scan(
 		&user.Id,
 		&user.Name,
 		&user.Email,
 		&user.PasswordHash.hash,
 		&user.Role,
+		&user.IsActive,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
-	if err == sql.ErrNoRows {
+
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-
 	if err != nil {
 		return nil, err
 	}
-	return user,nil
+	return user, nil
 }
 
 func (pg *PostgresUserStore) UpdateUser(user *User) error {
+	query := `
+		UPDATE users
+		SET name = $1, email = $2, password_hash = $3, role = $4, updated_at = NOW()
+		WHERE id = $5
+	`
 
-	query := `UPDATE users
-	SET name = $1, email = $2, password_hash = $3, role = $4, updated_at = NOW()
-	WHERE id = $5`
-	_, err := pg.db.Exec(query, user.Name, user.Email, user.PasswordHash.hash, user.Role, user.Id)
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err := pg.db.Exec(query,
+		user.Name,
+		user.Email,
+		user.PasswordHash.hash,
+		user.Role,
+		user.Id,
+	)
+	return err
 }
 
 func (pg *PostgresUserStore) DisableUser(id int64) error {
-	query := `UPDATE users
-	SET is_active = false
-	WHERE id = $1`
+	query := `
+		UPDATE users
+		SET is_active = false, updated_at = NOW()
+		WHERE id = $1 AND is_active = true
+	`
 
-	_, err := pg.db.Exec(query, id)
+	result, err := pg.db.Exec(query, id)
 	if err != nil {
 		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
 	}
 	return nil
 }
 
+func (pg *PostgresUserStore) ListUsers() ([]User, error) {
+    query := `
+        SELECT id, name, email, role, is_active, created_at, updated_at
+        FROM users
+        ORDER BY id ASC
+    `
+    rows, err := pg.db.Query(query)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
 
+    var out []User
+    for rows.Next() {
+        var u User
+        if err := rows.Scan(
+            &u.Id,
+            &u.Name,
+            &u.Email,
+            &u.Role,
+            &u.IsActive,
+            &u.CreatedAt,
+            &u.UpdatedAt,
+        ); err != nil {
+            return nil, err
+        }
+        out = append(out, u)
+    }
+    if err := rows.Err(); err != nil {
+        return nil, err
+    }
+    return out, nil
+}

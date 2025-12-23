@@ -91,7 +91,7 @@ func (pg *PostgresWorkSessionStore) StopSession(id int64) error {
 	query := `
 	UPDATE work_sessions
 	SET end_at = NOW()
-	WHERE user_id = $1 AND end_at IS NULL`
+	WHERE id = $1 AND end_at IS NULL`
 
 	result, err := pg.db.Exec(query, id)
 	if err != nil {

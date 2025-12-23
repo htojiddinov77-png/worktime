@@ -77,15 +77,15 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 }
 
 func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r)
-	if !ok {
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{
-			"error": "unauthorized",
-		})
+	sessionId, err := utils.ReadIdParam(r)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid id"})
 		return
 	}
 
-	err := wh.workSessionStore.StopSession(userID)
+
+
+	err = wh.workSessionStore.StopSession(sessionId)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			utils.WriteJson(w, http.StatusNotFound, utils.Envelope{
@@ -105,7 +105,7 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 }
 
 func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.Request) {
-	// Must be authenticated
+	
 	authUserID, ok := middleware.GetUserID(r)
 	if !ok {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})

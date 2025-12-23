@@ -45,7 +45,7 @@ type User struct {
 	Email        string    `json:"email"`
 	PasswordHash password  `json:"-"`
 	Role         string    `json:"role"`
-	IsActive     bool      `json:"-"`
+	IsActive     bool      `json:"is_active"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -69,18 +69,18 @@ type UserStore interface {
 
 func (pg *PostgresUserStore) CreateUser(user *User) error {
 	query := `
-		INSERT INTO users (name, email, password_hash, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, NOW(), NOW())
-		RETURNING id, created_at;
+		INSERT INTO users (name, email, password_hash, is_active, created_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		RETURNING id, role, created_at;
 	`
 
 	err := pg.db.QueryRow(
 		query,
 		user.Name,
 		user.Email,
-		string(user.PasswordHash.hash),
+		user.PasswordHash.hash,
 		user.IsActive,
-	).Scan(&user.Id, &user.CreatedAt)
+	).Scan(&user.Id,&user.Role, &user.CreatedAt)
 
 	if err != nil {
 		return err

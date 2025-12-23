@@ -60,6 +60,7 @@ func (th *TokenHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	if !existingUser.IsActive{
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "user is inactive"})
+		return
 	}
 
 
@@ -84,5 +85,8 @@ func (th *TokenHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.WriteJson(w, http.StatusOK, utils.Envelope{"token": tokenString})
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{
+		"token": tokenString,
+		"role": existingUser.Role,
+	})
 }

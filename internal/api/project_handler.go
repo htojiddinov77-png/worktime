@@ -75,10 +75,10 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 		utils.WriteJson(w, http.StatusForbidden, utils.Envelope{"error": "only admin can create a project"})
 		return
 	}
+	
 
 	pj := &store.Project{
 		Name:     req.Name,
-		StatusId: req.StatusId,
 	}
 
 	if err := ph.projectStore.CreateProject(pj); err != nil {
@@ -96,16 +96,19 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 
 
 func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Request) {
-    projects, err := ph.projectStore.ListProjects()
-    if err != nil {
-        ph.logger.Println("ListProjects error:", err)
-        utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
-        return
-    }
+	projects, err := ph.projectStore.ListProjects()
+	if err != nil {
+		ph.logger.Println("ListProjects error:", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{
+			"error": "internal server error",
+		})
+		return
+	}
 
-    utils.WriteJson(w, http.StatusOK, utils.Envelope{
-        "projects": projects,
-        "count":    len(projects),
-    })
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{
+		"count":    len(projects),
+		"projects": projects,
+	})
 }
+
 

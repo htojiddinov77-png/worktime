@@ -26,7 +26,8 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 		r.Group(func(r chi.Router) {
 			r.Use(app.Middleware.Authenticate)
 
-			r.Get("/reports/daily", app.WorkSessionHandler.HandleDailyReport) 
+
+			r.Get("/reports/summary", app.WorkSessionHandler.HandleSummaryReport)
 			r.Get("/projects", app.ProjectHandler.HandleListProjects)
 
 			// Work sessions

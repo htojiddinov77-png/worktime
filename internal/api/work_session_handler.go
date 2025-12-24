@@ -101,6 +101,7 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
 		"message": "session stopped",
+		"session_id": sessionId,
 	})
 }
 
@@ -240,71 +241,90 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 
 	
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
-		"filters": utils.Envelope{
-			"user_id":     userIDPtr,
-			"project_id":  projectIDPtr,
-			"status":      q.Get("status"),
-			"start_from":  q.Get("start_from"),
-			"start_to":    q.Get("start_to"),
-			"search":      q.Get("search"),
-			"limit":       limit,
-			"offset":      offset,
-		},
 		"sessions": rows,
 		"count":    len(rows),
 	})
 }
 
-func (rh *WorkSessionHandler) HandleDailyReport(w http.ResponseWriter, r *http.Request) {
-    authUserID, ok := middleware.GetUserID(r)
-    if !ok {
-        utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
-        return
-    }
-    role, _ := middleware.GetUserRole(r)
+func (rh *WorkSessionHandler) HandleSummaryReport(w http.ResponseWriter, r *http.Request) {
+	authUserID, ok := middleware.GetUserID(r)
+	if !ok {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		return
+	}
+	role, _ := middleware.GetUserRole(r)
 
-    // date=YYYY-MM-DD (simple for frontend)
-    dateStr := strings.TrimSpace(r.URL.Query().Get("date"))
-    if dateStr == "" {
-        utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "missing date (YYYY-MM-DD)"})
-        return
-    }
+	// from/to required (or you can default to last 7 days if you want)
+	fromStr := strings.TrimSpace(r.URL.Query().Get("from"))
+	toStr := strings.TrimSpace(r.URL.Query().Get("to"))
+	if fromStr == "" || toStr == "" {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "missing from/to (YYYY-MM-DD)"})
+		return
+	}
 
-    date, err := time.Parse("2006-01-02", dateStr)
-    if err != nil {
-        utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid date (YYYY-MM-DD)"})
-        return
-    }
+	fromDate, err := time.Parse("2006-01-02", fromStr)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid from (YYYY-MM-DD)"})
+		return
+	}
+	toDate, err := time.Parse("2006-01-02", toStr)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid to (YYYY-MM-DD)"})
+		return
+	}
 
-    // admin can optionally pass user_id; non-admin always self
-    var uidPtr *int64
-    if role != "admin" {
-        uidPtr = &authUserID
-    } else {
-        // optional: ?user_id=123
-        if s := strings.TrimSpace(r.URL.Query().Get("user_id")); s != "" {
-            v, err := strconv.ParseInt(s, 10, 64)
-            if err != nil || v <= 0 {
-                utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid user_id"})
-                return
-            }
-            uidPtr = &v
-        }
-    }
+	// user_id: non-admin forced to auth user, admin optional
+	var uidPtr *int64
+	if role != "admin" {
+		uidPtr = &authUserID
+	} else {
+		if s := strings.TrimSpace(r.URL.Query().Get("user_id")); s != "" {
+			v, err := strconv.ParseInt(s, 10, 64)
+			if err != nil || v <= 0 {
+				utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid user_id"})
+				return
+			}
+			uidPtr = &v
+		}
+	}
 
-    summary, err := rh.workSessionStore.GetDailySummary(uidPtr, date)
-    if err != nil {
-        rh.logger.Println("GetDailySummary error:", err)
-        utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
-        return
-    }
+	// project_id optional
+	var pidPtr *int64
+	if s := strings.TrimSpace(r.URL.Query().Get("project_id")); s != "" {
+		v, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || v <= 0 {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid project_id"})
+			return
+		}
+		pidPtr = &v
+	}
 
-    utils.WriteJson(w, http.StatusOK, utils.Envelope{
-        "date":    dateStr,
-        "summary": summary,
-        "count":   len(summary),
-    })
+	filter := store.SummaryRangeFilter{
+		UserID:    uidPtr,
+		ProjectID: pidPtr,
+		FromDate:  fromDate,
+		ToDate:    toDate,
+	}
+
+	rep, err := rh.workSessionStore.GetSummaryReport(filter)
+	if err != nil {
+		rh.logger.Println("GetSummaryReport error:", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	// rep already matches the JSON shape you want
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{
+		"from":       rep.From,
+		"to":         rep.To,
+		"filters":    rep.Filters,
+		"user":       rep.User,
+		"overall":    rep.Overall,
+		"by_project": rep.ByProject,
+	})
 }
+
+
 
 
 

@@ -73,7 +73,7 @@ func (th *TokenHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !matches {
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "password don't match"})
 		return
 	}
 

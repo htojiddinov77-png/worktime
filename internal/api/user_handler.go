@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/htojiddinov77-png/worktime/internal/auth"
 	"github.com/htojiddinov77-png/worktime/internal/middleware"
 	"github.com/htojiddinov77-png/worktime/internal/store"
 	"github.com/htojiddinov77-png/worktime/internal/utils"
@@ -17,12 +19,14 @@ import (
 type UserHandler struct {
 	userStore store.UserStore
 	logger    *log.Logger
+	jwt *auth.JWTManager
 }
 
-func NewUserHandler(userStore store.UserStore, logger *log.Logger) *UserHandler {
+func NewUserHandler(userStore store.UserStore, logger *log.Logger, jwt *auth.JWTManager) *UserHandler {
 	return &UserHandler{
 		userStore: userStore,
 		logger:    logger,
+		jwt: jwt,
 	}
 }
 
@@ -317,4 +321,132 @@ func (uh *UserHandler) HandleAdminListUsers(w http.ResponseWriter, r *http.Reque
 		"users": users,
 		"count": len(users),
 	})
+}
+
+func (uh *UserHandler) HandleGenerateResetToekn(w http.ResponseWriter, r *http.Request) {
+	role, _ := middleware.GetUserRole(r)
+	if role != "admin" {
+		utils.WriteJson(w, http.StatusForbidden, utils.Envelope{"error": "forbidden"})
+		return
+	}
+
+	var input struct {
+		Email string `json:"email"`
+	}
+
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	err := dec.Decode(&input)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid JSON body"})
+		return
+	}
+
+	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
+	if input.Email == "" {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "email is required"})
+		return
+	}
+
+	user, err := uh.userStore.GetUserByEmail(input.Email)
+	if err != nil {
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	if user == nil {
+		utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "user not found"})
+		return
+	}
+
+	ttl := 10 * time.Minute
+
+	resetToken, expiresAt, err := uh.jwt.CreateResetToken(
+		user.Id,
+		user.Email,
+		user.Role,
+		user.IsActive,
+		ttl,
+	)
+
+	if err != nil {
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{
+		"reset_token": resetToken,
+		"expires_at": expiresAt.Format(time.RFC3339),
+	})
+}
+
+func (uh *UserHandler) HandleResetPassword(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Token string `json:"token"`
+		NewPassword string `json:"new_password"`
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	err := dec.Decode(&input)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid JSON body"})
+		return
+	}
+
+	input.Token = strings.TrimSpace(input.Token)
+	input.NewPassword = strings.TrimSpace(input.NewPassword)
+	input.ConfirmPassword = strings.TrimSpace(input.ConfirmPassword)
+
+	if input.Token == "" {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "token is required"})
+		return
+	}
+
+	if input.NewPassword == "" || input.ConfirmPassword == "" {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "password fields are required"})
+		return
+	}
+
+	if input.NewPassword != input.ConfirmPassword {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "password don't match"})
+		return
+	}
+
+	claims, err := uh.jwt.ParseResetToken(input.Token)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid or expired token"})
+		return
+	}
+
+	user, err := uh.userStore.GetUserById(claims.UserID)
+	if err != nil {
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	if user == nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid token user"})
+	}
+
+	if !strings.EqualFold(user.Email, claims.Email) {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "token doesn't match"})
+		return
+	}
+
+	err = user.PasswordHash.Set(input.NewPassword)
+	if err != nil {
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	err = uh.userStore.UpdatePasswordPlain(user.Id, input.NewPassword)
+	if err != nil {
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "password updated"})
 }

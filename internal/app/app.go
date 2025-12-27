@@ -41,7 +41,7 @@ func NewApplication() (*Application, error) {
 	jwtManager := auth.NewJWTManager()
 
 	// Handlers
-	userHandler := api.NewUserHandler(userStore, logger)
+	userHandler := api.NewUserHandler(userStore, logger, jwtManager)
 	projectHandler := api.NewProjectHandler(projectStore, userStore, logger)
 	workSessionHandler := api.NewWorkSessionHandler(workSessionStore, userStore, logger, middleware.Middleware{JWT: jwtManager})
 	tokenHandler := api.NewTokenHandler(userStore, jwtManager, logger)

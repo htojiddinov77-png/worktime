@@ -66,6 +66,7 @@ type UserStore interface {
 	CreateUser(*User) error
 	GetUserById(id int64) (*User, error)
 	GetUserByEmail(email string) (*User, error)
+	UpdatePasswordPlain(userId int64, newPassword string) error
 	UpdateUser(user *User) error
 	AdminUserUpdate(id int64, in AdminUserUpdate) error
 	ListUsers() ([]User, error)
@@ -231,4 +232,32 @@ func (pg *PostgresUserStore) ListUsers() ([]User, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func (pg *PostgresUserStore) UpdatePasswordPlain(userId int64, newPassword string) error {
+	var p password
+	err := p.Set(newPassword)
+	if err != nil {
+		return err
+	}
+
+	hashBytes := p.hash
+	query := `UPDATE users
+	SET password_hash = $1, updated_at = NOW()
+	WHERE id = $2`
+
+	res, err := pg.db.Exec(query, hashBytes, userId)
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }

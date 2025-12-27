@@ -22,7 +22,12 @@ type WorkSessionHandler struct {
 	Middleware       middleware.Middleware
 }
 
-func NewWorkSessionHandler(workSessionStore store.WorkSessionStore, userStore store.UserStore, logger *log.Logger, middleware middleware.Middleware) *WorkSessionHandler {
+func NewWorkSessionHandler(
+	workSessionStore store.WorkSessionStore,
+	userStore store.UserStore,
+	logger *log.Logger,
+	middleware middleware.Middleware,
+) *WorkSessionHandler {
 	return &WorkSessionHandler{
 		workSessionStore: workSessionStore,
 		userStore:        userStore,
@@ -30,6 +35,52 @@ func NewWorkSessionHandler(workSessionStore store.WorkSessionStore, userStore st
 		Middleware:       middleware,
 	}
 }
+
+// --- metadata (book-style) ---
+
+type metadata struct {
+	CurrentPage  int `json:"current_page"`
+	PageSize     int `json:"page_size"`
+	FirstPage    int `json:"first_page"`
+	LastPage     int `json:"last_page"`
+	TotalRecords int `json:"total_records"`
+}
+
+func calculateMetadata(totalRecords, page, pageSize int) metadata {
+	if totalRecords == 0 {
+		return metadata{}
+	}
+	lastPage := (totalRecords + pageSize - 1) / pageSize
+	return metadata{
+		CurrentPage:  page,
+		PageSize:     pageSize,
+		FirstPage:    1,
+		LastPage:     lastPage,
+		TotalRecords: totalRecords,
+	}
+}
+
+// parseTimeParam accepts either RFC3339 (full timestamp) OR "2006-01-02" (date only).
+func parseTimeParam(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, errors.New("empty time")
+	}
+
+	// Try RFC3339 first
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+
+	// Try YYYY-MM-DD (treat as start of day UTC)
+	if d, err := time.Parse("2006-01-02", s); err == nil {
+		return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC), nil
+	}
+
+	return time.Time{}, errors.New("invalid time format")
+}
+
+// ---------------- Handlers ----------------
 
 func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	type sessionRequest struct {
@@ -39,82 +90,89 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 
 	var req sessionRequest
 
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		wh.logger.Println("Error decoding request")
-		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "decoding json"})
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	if err := dec.Decode(&req); err != nil {
+		wh.logger.Println("Error decoding request:", err)
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid JSON body"})
 		return
 	}
+
+	if req.ProjectID <= 0 {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "project_id must be positive"})
+		return
+	}
+	req.Note = strings.TrimSpace(req.Note)
 
 	userID, ok := middleware.GetUserID(r)
-	if !ok {
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unathorized"})
+	if !ok || userID <= 0 {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
+
 	ws := &store.WorkSession{
-		UserId: userID,
+		UserId:    userID,
 		ProjectId: req.ProjectID,
-		Note: req.Note,
+		Note:      req.Note,
 	}
 
-	err = wh.workSessionStore.StartSession(ws)
-	if err != nil {
+	if err := wh.workSessionStore.StartSession(ws); err != nil {
 		wh.logger.Printf("Error starting session: %v", err)
+		if strings.Contains(err.Error(), "one_active_session_per_user") {
+			utils.WriteJson(w, http.StatusConflict, utils.Envelope{
+				"error": "you already have one active session.Stop it before starting a new sessions",
+			})
+		}
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
 
-	status := "inactive"
-	if ws.EndAt == nil {
-		status = "active"
-	}
-
-
+	// new session is active because EndAt is nil
 	utils.WriteJson(w, http.StatusCreated, utils.Envelope{
 		"session": ws,
-		"status": status,
+		"status":  "active",
 	})
 }
 
 func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.Request) {
 	sessionId, err := utils.ReadIdParam(r)
-	if err != nil {
+	if err != nil || sessionId <= 0 {
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid id"})
 		return
 	}
 
+	userID, ok := middleware.GetUserID(r)
+	if !ok || userID <= 0 {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		return
+	}
 
-
-	err = wh.workSessionStore.StopSession(sessionId)
+	err = wh.workSessionStore.StopSession(sessionId, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			utils.WriteJson(w, http.StatusNotFound, utils.Envelope{
-				"error": "no active session",
-			})
+			utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "no active session"})
 			return
 		}
-		wh.logger.Println("Error stopping session: ", err)
-	utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{
-		"error": "internal server error",
-	})
+		wh.logger.Println("Error stopping session:", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
 	}
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
-		"message": "session stopped",
+		"message":    "session stopped",
 		"session_id": sessionId,
 	})
 }
 
 func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.Request) {
-	
 	authUserID, ok := middleware.GetUserID(r)
-	if !ok {
+	if !ok || authUserID <= 0 {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
 
-	role, _ := middleware.GetUserRole(r) // if missing, treat as non-admin
-
+	role, _ := middleware.GetUserRole(r) // if missing => non-admin
 	q := r.URL.Query()
 
 	var (
@@ -126,28 +184,27 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 		searchPtr    *string
 	)
 
-	// user_id: admin can filter by it, non-admin must be self
-	if userIDStr := strings.TrimSpace(q.Get("user_id")); userIDStr != "" {
-		parsed, err := strconv.ParseInt(userIDStr, 10, 64)
-		if err != nil || parsed <= 0 {
+	// Admin can filter by user_id; non-admin forced to self
+	if s := strings.TrimSpace(q.Get("user_id")); s != "" {
+		v, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || v <= 0 {
 			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid user_id"})
 			return
 		}
-		userIDPtr = &parsed
+		userIDPtr = &v
 	}
 
 	// project_id
-	if projectIDStr := strings.TrimSpace(q.Get("project_id")); projectIDStr != "" {
-		parsed, err := strconv.ParseInt(projectIDStr, 10, 64)
-		if err != nil || parsed <= 0 {
+	if s := strings.TrimSpace(q.Get("project_id")); s != "" {
+		v, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || v <= 0 {
 			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid project_id"})
 			return
 		}
-		projectIDPtr = &parsed
+		projectIDPtr = &v
 	}
 
-	// status: active|inactive (maps to end_at null/not null)
-	// allow both `status=active` or `active=true/false` (optional)
+	// status: active|inactive OR active=true/false
 	if status := strings.ToLower(strings.TrimSpace(q.Get("status"))); status != "" {
 		switch status {
 		case "active":
@@ -160,29 +217,28 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid status (use active or inactive)"})
 			return
 		}
-	} else if activeStr := strings.TrimSpace(q.Get("active")); activeStr != "" {
-		parsed, err := strconv.ParseBool(activeStr)
+	} else if s := strings.TrimSpace(q.Get("active")); s != "" {
+		v, err := strconv.ParseBool(s)
 		if err != nil {
 			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid active (use true/false)"})
 			return
 		}
-		activePtr = &parsed
+		activePtr = &v
 	}
 
-	// start_from / start_to: RFC3339 timestamps
+	// start_from/start_to: RFC3339 OR YYYY-MM-DD
 	if s := strings.TrimSpace(q.Get("start_from")); s != "" {
-		t, err := time.Parse(time.RFC3339, s)
+		t, err := parseTimeParam(s)
 		if err != nil {
-			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid start_from (use RFC3339)"})
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid start_from (use RFC3339 or YYYY-MM-DD)"})
 			return
 		}
 		startFromPtr = &t
 	}
-
 	if s := strings.TrimSpace(q.Get("start_to")); s != "" {
-		t, err := time.Parse(time.RFC3339, s)
+		t, err := parseTimeParam(s)
 		if err != nil {
-			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid start_to (use RFC3339)"})
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid start_to (use RFC3339 or YYYY-MM-DD)"})
 			return
 		}
 		startToPtr = &t
@@ -193,68 +249,73 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 		searchPtr = &s
 	}
 
-	// pagination
-	limit := 50
-	if s := strings.TrimSpace(q.Get("limit")); s != "" {
+	// page/page_size (book)
+	page := 1
+	if s := strings.TrimSpace(q.Get("page")); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 1 {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid page (>=1)"})
+			return
+		}
+		page = v
+	}
+
+	pageSize := 50
+	if s := strings.TrimSpace(q.Get("page_size")); s != "" {
 		v, err := strconv.Atoi(s)
 		if err != nil || v < 1 || v > 200 {
-			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid limit (1..200)"})
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid page_size (1..200)"})
 			return
 		}
-		limit = v
+		pageSize = v
 	}
 
-	offset := 0
-	if s := strings.TrimSpace(q.Get("offset")); s != "" {
-		v, err := strconv.Atoi(s)
-		if err != nil || v < 0 {
-			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid offset (>=0)"})
-			return
-		}
-		offset = v
+	// sort (store enforces allowlist; we just provide default)
+	sort := strings.TrimSpace(q.Get("sort"))
+	if sort == "" {
+		sort = "-start_at"
 	}
 
-	
+	// Ownership enforcement
 	if role != "admin" {
 		userIDPtr = &authUserID
-	} else {
-	
 	}
 
 	filter := store.WorkSessionFilter{
-		UserID:     userIDPtr,
-		ProjectID:  projectIDPtr,
-		Active:     activePtr,
-		StartFrom:  startFromPtr,
-		StartTo:    startToPtr,
-		Search:     searchPtr,
-		Limit:      limit,
-		Offset:     offset,
+		UserID:    userIDPtr,
+		ProjectID: projectIDPtr,
+		Active:    activePtr,
+		StartFrom: startFromPtr,
+		StartTo:   startToPtr,
+		Search:   searchPtr,
+
+		Page:     page,
+		PageSize: pageSize,
+		Sort:     sort,
 	}
 
-	rows, err := wh.workSessionStore.ListSessions(filter)
+	rows, total, err := wh.workSessionStore.ListSessions(filter)
 	if err != nil {
 		wh.logger.Println("ListSessions error:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
 
-	
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
 		"sessions": rows,
-		"count":    len(rows),
+		"metadata": calculateMetadata(total, page, pageSize),
 	})
 }
 
-func (rh *WorkSessionHandler) HandleSummaryReport(w http.ResponseWriter, r *http.Request) {
+func (wh *WorkSessionHandler) HandleSummaryReport(w http.ResponseWriter, r *http.Request) {
 	authUserID, ok := middleware.GetUserID(r)
-	if !ok {
+	if !ok || authUserID <= 0 {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
+
 	role, _ := middleware.GetUserRole(r)
 
-	// from/to required (or you can default to last 7 days if you want)
 	fromStr := strings.TrimSpace(r.URL.Query().Get("from"))
 	toStr := strings.TrimSpace(r.URL.Query().Get("to"))
 	if fromStr == "" || toStr == "" {
@@ -306,14 +367,14 @@ func (rh *WorkSessionHandler) HandleSummaryReport(w http.ResponseWriter, r *http
 		ToDate:    toDate,
 	}
 
-	rep, err := rh.workSessionStore.GetSummaryReport(filter)
+	rep, err := wh.workSessionStore.GetSummaryReport(filter)
 	if err != nil {
-		rh.logger.Println("GetSummaryReport error:", err)
+		wh.logger.Println("GetSummaryReport error:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
 
-	// rep already matches the JSON shape you want
+	// You can return rep directly too, but keeping your response shape:
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
 		"from":       rep.From,
 		"to":         rep.To,
@@ -323,8 +384,3 @@ func (rh *WorkSessionHandler) HandleSummaryReport(w http.ResponseWriter, r *http
 		"by_project": rep.ByProject,
 	})
 }
-
-
-
-
-

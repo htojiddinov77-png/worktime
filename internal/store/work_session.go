@@ -12,9 +12,7 @@ type PostgresWorkSessionStore struct {
 }
 
 func NewPostgresWorkSessionStore(db *sql.DB) *PostgresWorkSessionStore {
-	return &PostgresWorkSessionStore{
-		db: db,
-	}
+	return &PostgresWorkSessionStore{db: db}
 }
 
 type WorkSession struct {
@@ -35,6 +33,8 @@ type WorkSessionRow struct {
 	DerivedStatus string `json:"status"` // "active" if end_at IS NULL else "inactive"
 }
 
+// Book-ish filter inputs.
+// Note: keep pointers for optional filters.
 type WorkSessionFilter struct {
 	// Ownership / filters
 	UserID    *int64
@@ -49,12 +49,13 @@ type WorkSessionFilter struct {
 	StartFrom *time.Time
 	StartTo   *time.Time
 
-	// Optional text search (matches project name OR user name/email)
+	// Optional text search (matches project name OR user name/email OR note)
 	Search *string
 
-	// Pagination (optional)
-	Limit  int
-	Offset int
+	// Book-style pagination + sorting
+	Page     int
+	PageSize int
+	Sort     string // e.g. "start_at", "-start_at", "created_at", "-created_at", "id", "-id"
 }
 
 type DailySummary struct {
@@ -106,37 +107,34 @@ type SummaryReport struct {
 	ByProject []ProjectSummary `json:"by_project"`
 }
 
-
-
 type WorkSessionStore interface {
 	StartSession(*WorkSession) error
-	StopSession(id int64) error
+	StopSession(sessionID int64, userID int64) error
 	GetSummaryReport(filter SummaryRangeFilter) (*SummaryReport, error)
-	ListSessions(filter WorkSessionFilter) ([]WorkSessionRow, error)
+
+	// book-style: return total records too (for pagination metadata)
+	ListSessions(filter WorkSessionFilter) ([]WorkSessionRow, int, error)
 }
 
-func (pg *PostgresWorkSessionStore) StartSession(worksession *WorkSession) error {
+func (pg *PostgresWorkSessionStore) StartSession(ws *WorkSession) error {
 	query := `
-	INSERT INTO work_sessions(user_id, project_id, note, start_at, created_at)
-	VALUES($1, $2, $3, NOW(), NOW())
-	RETURNING id, start_at, created_at;
- `
+		INSERT INTO work_sessions (user_id, project_id, note, start_at, created_at)
+		VALUES ($1, $2, $3, NOW(), NOW())
+		RETURNING id, start_at, created_at;
+	`
 
-	err := pg.db.QueryRow(query, worksession.UserId, worksession.ProjectId, worksession.Note).Scan(&worksession.Id, &worksession.StartAt, &worksession.CreatedAt)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return pg.db.QueryRow(query, ws.UserId, ws.ProjectId, ws.Note).
+		Scan(&ws.Id, &ws.StartAt, &ws.CreatedAt)
 }
 
-func (pg *PostgresWorkSessionStore) StopSession(id int64) error {
+func (pg *PostgresWorkSessionStore) StopSession(sessionID int64, userID int64) error {
 	query := `
-	UPDATE work_sessions
-	SET end_at = NOW()
-	WHERE id = $1 AND end_at IS NULL`
+		UPDATE work_sessions
+		SET end_at = NOW()
+		WHERE id = $1 AND user_id = $2 AND end_at IS NULL
+	`
 
-	result, err := pg.db.Exec(query, id)
+	result, err := pg.db.Exec(query, sessionID, userID)
 	if err != nil {
 		return err
 	}
@@ -149,33 +147,61 @@ func (pg *PostgresWorkSessionStore) StopSession(id int64) error {
 	if rowsAffected == 0 {
 		return sql.ErrNoRows
 	}
+
 	return nil
 }
 
-func (pg *PostgresWorkSessionStore) ListSessions(filter WorkSessionFilter) ([]WorkSessionRow, error) {
-	limit := filter.Limit
-	if limit <= 0 || limit > 200 {
-		limit = 50
+func (pg *PostgresWorkSessionStore) ListSessions(filter WorkSessionFilter) ([]WorkSessionRow, int, error) {
+	// Defaults (book-ish)
+	if filter.Page < 1 {
+		filter.Page = 1
+	}
+	if filter.PageSize <= 0 || filter.PageSize > 200 {
+		filter.PageSize = 50
+	}
+
+	limit := filter.PageSize
+	offset := (filter.Page - 1) * filter.PageSize
+
+	// SAFE sort allowlist (book rule)
+	sortSQL := "ws.start_at DESC, ws.id DESC"
+	switch filter.Sort {
+	case "start_at":
+		sortSQL = "ws.start_at ASC, ws.id ASC"
+	case "-start_at", "":
+		sortSQL = "ws.start_at DESC, ws.id DESC"
+	case "created_at":
+		sortSQL = "ws.created_at ASC, ws.id ASC"
+	case "-created_at":
+		sortSQL = "ws.created_at DESC, ws.id DESC"
+	case "id":
+		sortSQL = "ws.id ASC"
+	case "-id":
+		sortSQL = "ws.id DESC"
+	default:
+		// fallback safe
+		sortSQL = "ws.start_at DESC, ws.id DESC"
 	}
 
 	base := `
-			SELECT
-				ws.id,
-				ws.user_id,
-				ws.project_id,
-				ws.start_at,
-				ws.end_at,
-				ws.note,
-				ws.created_at,
-				p.name AS project_name,
-				u.name AS user_name,
-				u.email AS user_email,
-				CASE WHEN ws.end_at IS NULL THEN 'active' ELSE 'inactive' END AS status
-			FROM work_sessions ws
-			JOIN projects p ON ws.project_id = p.id
-			JOIN users u ON ws.user_id = u.id
-			WHERE 1=1
-			`
+		SELECT
+			COUNT(*) OVER() AS total_records,
+			ws.id,
+			ws.user_id,
+			ws.project_id,
+			ws.start_at,
+			ws.end_at,
+			ws.note,
+			ws.created_at,
+			p.name AS project_name,
+			u.name AS user_name,
+			u.email AS user_email,
+			CASE WHEN ws.end_at IS NULL THEN 'active' ELSE 'inactive' END AS status
+		FROM work_sessions ws
+		JOIN projects p ON ws.project_id = p.id
+		JOIN users u ON ws.user_id = u.id
+		WHERE 1=1
+	`
 
 	var (
 		sb   strings.Builder
@@ -185,8 +211,8 @@ func (pg *PostgresWorkSessionStore) ListSessions(filter WorkSessionFilter) ([]Wo
 
 	sb.WriteString(base)
 
-	add := func(sql string, v any) {
-		sb.WriteString(fmt.Sprintf(" AND "+sql, pos))
+	add := func(cond string, v any) {
+		sb.WriteString(fmt.Sprintf(" AND "+cond, pos))
 		args = append(args, v)
 		pos++
 	}
@@ -215,39 +241,46 @@ func (pg *PostgresWorkSessionStore) ListSessions(filter WorkSessionFilter) ([]Wo
 		if s != "" {
 			like := "%" + s + "%"
 			sb.WriteString(fmt.Sprintf(`
-			AND (
-				p.name ILIKE $%d OR u.name ILIKE $%d OR u.email ILIKE $%d)`,
-				pos, pos+1, pos+2))
-			args = append(args, like, like, like)
-			pos += 3
+				AND (
+					p.name ILIKE $%d OR
+					u.name ILIKE $%d OR
+					u.email ILIKE $%d OR
+					COALESCE(ws.note,'') ILIKE $%d
+				)
+			`, pos, pos+1, pos+2, pos+3))
+			args = append(args, like, like, like, like)
+			pos += 4
 		}
 	}
 
-	sb.WriteString(" ORDER BY ws.start_at DESC, ws.id DESC")
+	sb.WriteString(" ORDER BY " + sortSQL)
 	sb.WriteString(fmt.Sprintf(" LIMIT $%d OFFSET $%d", pos, pos+1))
-	args = append(args, limit, filter.Offset)
+	args = append(args, limit, offset)
 
 	rows, err := pg.db.Query(sb.String(), args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
 	out := make([]WorkSessionRow, 0, limit)
+	total := 0
 
 	for rows.Next() {
 		var (
-			row  WorkSessionRow
-			note sql.NullString
+			row          WorkSessionRow
+			note         sql.NullString
+			totalRecords int
 		)
 
 		err := rows.Scan(
+			&totalRecords,
 			&row.Id,
 			&row.UserId,
 			&row.ProjectId,
 			&row.StartAt,
 			&row.EndAt,
-			&note, // ws.note (nullable)
+			&note,
 			&row.CreatedAt,
 			&row.ProjectName,
 			&row.UserName,
@@ -255,7 +288,7 @@ func (pg *PostgresWorkSessionStore) ListSessions(filter WorkSessionFilter) ([]Wo
 			&row.DerivedStatus,
 		)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		if note.Valid {
@@ -264,48 +297,52 @@ func (pg *PostgresWorkSessionStore) ListSessions(filter WorkSessionFilter) ([]Wo
 			row.Note = ""
 		}
 
+		total = totalRecords
 		out = append(out, row)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return out, nil
+	return out, total, nil
 }
 
-
 func (pg *PostgresWorkSessionStore) GetSummaryReport(filter SummaryRangeFilter) (*SummaryReport, error) {
+	// Normalize dates to [fromStart, toEnd) in UTC
 	fromStart := time.Date(filter.FromDate.Year(), filter.FromDate.Month(), filter.FromDate.Day(), 0, 0, 0, 0, time.UTC)
 	toStart := time.Date(filter.ToDate.Year(), filter.ToDate.Month(), filter.ToDate.Day(), 0, 0, 0, 0, time.UTC)
 	toEnd := toStart.Add(24 * time.Hour)
 
-	if !toEnd.After(fromStart){
+	if !toEnd.After(fromStart) {
 		return nil, fmt.Errorf("invalid date range: to must be >= from")
 	}
 
 	rep := &SummaryReport{
 		From: fromStart.Format("2006-01-02"),
-		To: toStart.Format("2006-01-02"),
+		To:   toStart.Format("2006-01-02"),
 		Filters: SummaryFilters{
-			UserID: filter.UserID,
+			UserID:    filter.UserID,
 			ProjectID: filter.ProjectID,
 		},
 		ByProject: []ProjectSummary{},
 	}
 
+	// Optional user info for single-user report
 	if filter.UserID != nil {
 		var u ReportUser
 		err := pg.db.QueryRow(`
-		SELECT id, name, email
-		FROM users
-		WHERE id = $1`, *filter.UserID).Scan(&u.UserID, &u.UserName, &u.UserEmail)
+			SELECT id, name, email
+			FROM users
+			WHERE id = $1
+		`, *filter.UserID).Scan(&u.UserID, &u.UserName, &u.UserEmail)
 		if err != nil {
 			return nil, err
 		}
 		rep.User = &u
 	}
 
+	// Overall summary
 	overallSQL := `
 		SELECT
 			COUNT(*) AS total_sessions,
@@ -313,26 +350,28 @@ func (pg *PostgresWorkSessionStore) GetSummaryReport(filter SummaryRangeFilter) 
 				GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ws.end_at, NOW()) - ws.start_at)) / 60)
 			), 0)::int AS total_minutes
 		FROM work_sessions ws
-		WHERE ws.start_at >= $1 AND ws.start_at < $2`
+		WHERE ws.start_at >= $1 AND ws.start_at < $2
+	`
 
-	args := []any{fromStart,toEnd}
-	pos :=3
+	args := []any{fromStart, toEnd}
+	pos := 3
 
 	if filter.UserID != nil {
-		overallSQL += fmt.Sprintf(" AND ws.userid = %d", pos)
+		overallSQL += fmt.Sprintf(" AND ws.user_id = $%d", pos)
 		args = append(args, *filter.UserID)
 		pos++
 	}
 	if filter.ProjectID != nil {
-		overallSQL += fmt.Sprintf(" AND ws.project_id = %d", pos)
-		args =append(args, *filter.ProjectID)
+		overallSQL += fmt.Sprintf(" AND ws.project_id = $%d", pos)
+		args = append(args, *filter.ProjectID)
 		pos++
 	}
 
-	if err := pg.db.QueryRow(overallSQL,args...).Scan(&rep.Overall.TotalSessions, &rep.Overall.TotalMinutes); err != nil {
+	if err := pg.db.QueryRow(overallSQL, args...).Scan(&rep.Overall.TotalSessions, &rep.Overall.TotalMinutes); err != nil {
 		return nil, err
 	}
 
+	// By-project summary
 	byProjectSQL := `
 		SELECT
 			p.id AS project_id,
@@ -346,7 +385,7 @@ func (pg *PostgresWorkSessionStore) GetSummaryReport(filter SummaryRangeFilter) 
 		WHERE ws.start_at >= $1 AND ws.start_at < $2
 	`
 
-	args2 :=[]any{fromStart, toEnd}
+	args2 := []any{fromStart, toEnd}
 	pos2 := 3
 
 	if filter.UserID != nil {
@@ -382,5 +421,6 @@ func (pg *PostgresWorkSessionStore) GetSummaryReport(filter SummaryRangeFilter) 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
 	return rep, nil
 }

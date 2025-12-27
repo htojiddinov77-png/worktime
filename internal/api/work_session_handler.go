@@ -36,7 +36,6 @@ func NewWorkSessionHandler(
 	}
 }
 
-// --- metadata (book-style) ---
 
 type metadata struct {
 	CurrentPage  int `json:"current_page"`
@@ -60,7 +59,6 @@ func calculateMetadata(totalRecords, page, pageSize int) metadata {
 	}
 }
 
-// parseTimeParam accepts either RFC3339 (full timestamp) OR "2006-01-02" (date only).
 func parseTimeParam(s string) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -80,7 +78,6 @@ func parseTimeParam(s string) (time.Time, error) {
 	return time.Time{}, errors.New("invalid time format")
 }
 
-// ---------------- Handlers ----------------
 
 func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	type sessionRequest struct {
@@ -120,7 +117,7 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 	if err := wh.workSessionStore.StartSession(ws); err != nil {
 		wh.logger.Printf("Error starting session: %v", err)
 		if strings.Contains(err.Error(), "one_active_session_per_user") {
-			utils.WriteJson(w, http.StatusConflict, utils.Envelope{
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{
 				"error": "you already have one active session.Stop it before starting a new sessions",
 			})
 		}

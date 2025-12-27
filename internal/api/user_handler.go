@@ -1,10 +1,13 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/htojiddinov77-png/worktime/internal/middleware"
 	"github.com/htojiddinov77-png/worktime/internal/store"
@@ -59,8 +62,8 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := &store.User{
-		Name: req.Name,
-		Email: req.Email,
+		Name:     req.Name,
+		Email:    req.Email,
 		IsActive: true,
 	}
 
@@ -77,30 +80,28 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 	}
 
-
 	utils.WriteJson(w, http.StatusCreated, utils.Envelope{"user": user})
 
 }
 
-
 func (uh *UserHandler) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r)
-    if !ok {
-        utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
-        return
-    }
+	if !ok {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		return
+	}
 
-    existingUser, err := uh.userStore.GetUserById(userID)
-    if err != nil {
-        uh.logger.Println("GetUserById error:", err)
-        utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
-        return
-    }
+	existingUser, err := uh.userStore.GetUserById(userID)
+	if err != nil {
+		uh.logger.Println("GetUserById error:", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
 
-    if existingUser == nil {
-        utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
-        return
-    }
+	if existingUser == nil {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		return
+	}
 
 	type changePasswordRequest struct {
 		OldPassword string `json:"old_password"`
@@ -162,49 +163,158 @@ func (uh *UserHandler) HandleChangePassword(w http.ResponseWriter, r *http.Reque
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "password changed successfully"})
 }
 
-func (uh *UserHandler) HandleDisableUser(w http.ResponseWriter, r *http.Request) {
-	userID, err := utils.ReadIdParam(r)
-	if err != nil {
-		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "bad request"})
+func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	userId, ok := middleware.GetUserID(r)
+	if !ok {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
 		return
 	}
+	
 
-	existingUser, err := uh.userStore.GetUserById(userID)
+	existingUser, err := uh.userStore.GetUserById(userId)
 	if err != nil {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
 
 	if existingUser == nil {
-		utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "user doesn't exist"})
+		utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "User not found"})
 		return
 	}
 
-	err = uh.userStore.DisableUser(existingUser.Id)
+	var updateUserReqeust struct {
+		Name *string `json:"name"`
+		Email *string `json:"email"`
+	}
+
+	err = json.NewDecoder(r.Body).Decode(&updateUserReqeust)
 	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid request payload"})
+		return
+	}
+
+	if updateUserReqeust.Name != nil {
+		if strings.TrimSpace(*updateUserReqeust.Name) == "" {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "user can't be empty"})
+			return
+		}
+		existingUser.Name = *updateUserReqeust.Name
+	}
+
+	if updateUserReqeust.Email != nil {
+		if strings.TrimSpace(*updateUserReqeust.Email) == "" {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "Email cannot be empty"})
+			return
+		}
+
+		emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+		if !emailRegex.MatchString(*updateUserReqeust.Email) {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "Invalid email"})
+			return
+		}
+
+		userByEmail, err := uh.userStore.GetUserByEmail(*updateUserReqeust.Email)
+		if err != nil {
+			uh.logger.Println("Error geting userbyemail",err)
+			utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+			return
+		}
+		if userByEmail != nil && existingUser.Id != userByEmail.Id {
+			utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "Email already exists"})
+			return
+		}
+		existingUser.Email = *updateUserReqeust.Email
+	}
+
+	err = uh.userStore.UpdateUser(existingUser)
+	if err != nil {
+		uh.logger.Println("Error updating user:", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return 
+	}
+
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{"user": existingUser})
+}
+
+func (uh *UserHandler) HandleAdminUserUpdate(w http.ResponseWriter, r *http.Request) {
+	userId, err := utils.ReadIdParam(r)
+	if err != nil || userId < 0 {
+		uh.logger.Printf("Error getting user id %d", err)
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid id"})
+	}
+
+	var input struct {
+		isActive *bool   `json:"is_active"`
+		Role     *string `json:"role"`
+	} 
+
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	err = dec.Decode(&input)
+	if err != nil {
+		uh.logger.Println("Error decoding admin update user:", err)
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "Invalid JSON body"})
+		return
+	}
+
+	if input.isActive == nil && input.Role == nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "provie at least one field"})
+		return
+	}
+
+	if input.Role != nil {
+		role := strings.TrimSpace(*input.Role)
+		if role == "" {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "role can't be empty"})
+			return
+		}
+
+		if role != "admin" && role != "user" {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid role"})
+			return
+		}
+		input.Role = &role
+	}
+
+	err = uh.userStore.AdminUserUpdate(userId ,store.AdminUserUpdate{
+		IsActive: input.isActive,
+		Role: input.Role,
+	})
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "user not found"})
+			return
+		}
+
+		if err.Error() == "no fields to update" {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "no fields to update"})
+			return
+		}
+
+		uh.logger.Println("AdminUpdateUser error", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "intenal server error"})
+		return
+	}
+
+	utils.WriteJson(w, http.StatusOK,utils.Envelope{
+		"message": "user updated",
+		"user_id": userId,
+	})
+}
+
+func (uh *UserHandler) HandleAdminListUsers(w http.ResponseWriter, r *http.Request) {
+	// Route will be protected by RequireAdmin middleware, so we don’t re-check here.
+	users, err := uh.userStore.ListUsers()
+	if err != nil {
+		uh.logger.Println("ListUsers error:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
 
-	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "user disabled successfully"})
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{
+		"users": users,
+		"count": len(users),
+	})
 }
-
-func (uh *UserHandler) HandleAdminListUsers(w http.ResponseWriter, r *http.Request) {
-    // Route will be protected by RequireAdmin middleware, so we don’t re-check here.
-    users, err := uh.userStore.ListUsers()
-    if err != nil {
-        uh.logger.Println("ListUsers error:", err)
-        utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
-        return
-    }
-
-    utils.WriteJson(w, http.StatusOK, utils.Envelope{
-        "users": users,
-        "count": len(users),
-    })
-}
-
-
-
-
-

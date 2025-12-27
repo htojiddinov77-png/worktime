@@ -19,13 +19,12 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 		// Public
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/register/", app.UserHandler.HandleRegister) // checked
-			r.Post("/login/", app.TokenHandler.LoginHandler) // checked
+			r.Post("/login/", app.TokenHandler.LoginHandler)     // checked
 		})
 
 		// Protected
 		r.Group(func(r chi.Router) {
 			r.Use(app.Middleware.Authenticate)
-
 
 			r.Get("/reports/summary", app.WorkSessionHandler.HandleSummaryReport)
 			r.Get("/projects", app.ProjectHandler.HandleListProjects)
@@ -38,13 +37,16 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 			})
 
 			// User self
-			r.Patch("/users/me/password/", app.UserHandler.HandleChangePassword)
+			r.Route("/users/me", func(r chi.Router) {
+				r.Patch("/", app.UserHandler.HandleUpdateUser)
+				r.Patch("/password/", app.UserHandler.HandleChangePassword)
+			})
 
 			// Admin-only
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireAdmin)
-				r.Get("/admin/users", app.UserHandler.HandleAdminListUsers)
-				r.Patch("/admin/users/{id}/disable/", app.UserHandler.HandleDisableUser)
+				r.Get("/admin/users/", app.UserHandler.HandleAdminListUsers)
+				r.Patch("/admin/users/{id}/", app.UserHandler.HandleAdminUserUpdate)
 				r.Post("/projects/", app.ProjectHandler.HandleCreateProject) // checked
 			})
 		})

@@ -323,7 +323,7 @@ func (uh *UserHandler) HandleAdminListUsers(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (uh *UserHandler) HandleGenerateResetToekn(w http.ResponseWriter, r *http.Request) {
+func (uh *UserHandler) HandleGenerateResetToken(w http.ResponseWriter, r *http.Request) {
 	role, _ := middleware.GetUserRole(r)
 	if role != "admin" {
 		utils.WriteJson(w, http.StatusForbidden, utils.Envelope{"error": "forbidden"})

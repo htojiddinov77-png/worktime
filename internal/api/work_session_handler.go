@@ -346,7 +346,7 @@ func (wh *WorkSessionHandler) HandleSummaryReport(w http.ResponseWriter, r *http
 		}
 	}
 
-	// project_id optional
+	
 	var pidPtr *int64
 	if s := strings.TrimSpace(r.URL.Query().Get("project_id")); s != "" {
 		v, err := strconv.ParseInt(s, 10, 64)
@@ -371,7 +371,7 @@ func (wh *WorkSessionHandler) HandleSummaryReport(w http.ResponseWriter, r *http
 		return
 	}
 
-	// You can return rep directly too, but keeping your response shape:
+
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
 		"from":       rep.From,
 		"to":         rep.To,

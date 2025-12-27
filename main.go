@@ -11,6 +11,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/htojiddinov77-png/worktime/internal/app"
+	"github.com/htojiddinov77-png/worktime/internal/middleware"
 	"github.com/htojiddinov77-png/worktime/internal/router"
 )
 
@@ -37,9 +38,15 @@ func main() {
 
 	routes := router.SetUpRoutes(application)
 
+	allowed := map[string]bool{
+		"http://localhost:5173": true,
+		"http://localhost:3000": true,
+	}
+	handler := middleware.CORS(allowed)(routes)
+
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", *port),
-		Handler:      routes,
+		Handler:      handler,
 		IdleTimeout:  time.Minute,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,

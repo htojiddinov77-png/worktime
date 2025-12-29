@@ -49,10 +49,7 @@ type User struct {
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
-type AdminUserUpdate struct {
-	IsActive *bool
-	Role *string
-}
+
 
 type PostgresUserStore struct {
 	db *sql.DB
@@ -68,7 +65,6 @@ type UserStore interface {
 	GetUserByEmail(email string) (*User, error)
 	UpdatePasswordPlain(userId int64, newPassword string) error
 	UpdateUser(user *User) error
-	AdminUserUpdate(id int64, in AdminUserUpdate) error
 	ListUsers() ([]User, error)
 }
 
@@ -164,42 +160,13 @@ func (pg *PostgresUserStore) UpdateUser(user *User) error {
 		user.Name,
 		user.Email,
 		user.PasswordHash.hash,
+		user.Role,
+		user.IsActive,
 		user.Id,
 	)
 	return err
 }
 
-
-
-func (pg *PostgresUserStore) AdminUserUpdate(id int64, upd AdminUserUpdate) error {
-	if upd.IsActive == nil && upd.Role == nil {
-		return errors.New("no fields to update")
-	}
-
-	query := `
-	UPDATE users
-	SET 
-		is_active = COALESCE($2, is_active),
-		role = COALESCE($3, role)
-		updated_at = NOW(),
-	WHERE id = $1`
-
-	res,err := pg.db.Exec(query, id, upd.IsActive, upd.Role)
-	if err != nil {
-		return  err
-	}
-
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rows == 0 {
-		return sql.ErrNoRows
-	}
-
-	return nil
-}
 
 func (pg *PostgresUserStore) ListUsers() ([]User, error) {
 	query := `

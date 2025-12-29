@@ -255,6 +255,18 @@ func (uh *UserHandler) HandleAdminUserUpdate(w http.ResponseWriter, r *http.Requ
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid id"})
 	}
 
+	existingUser, err := uh.userStore.GetUserById(userId)
+	if err != nil {
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server errror"})
+		return
+	}
+
+	if existingUser == nil {
+		utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "User not found"})
+		return
+	}
+
+
 	var input struct {
 		IsActive *bool   `json:"is_active"`
 		Role     *string `json:"role"`
@@ -270,7 +282,6 @@ func (uh *UserHandler) HandleAdminUserUpdate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// existingUser := 
 
 	if input.IsActive == nil && input.Role == nil {
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "provie at least one field"})
@@ -288,13 +299,14 @@ func (uh *UserHandler) HandleAdminUserUpdate(w http.ResponseWriter, r *http.Requ
 			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid role"})
 			return
 		}
-		input.Role = &role
+		existingUser.Role = *input.Role
 	}
 
-	err = uh.userStore.AdminUserUpdate(userId ,store.AdminUserUpdate{
-		IsActive: input.IsActive,
-		Role: input.Role,
-	})
+	if input.IsActive != nil {
+		existingUser.IsActive = *input.IsActive
+	}
+
+	err = uh.userStore.UpdateUser(existingUser)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -308,7 +320,7 @@ func (uh *UserHandler) HandleAdminUserUpdate(w http.ResponseWriter, r *http.Requ
 		}
 
 		uh.logger.Println("AdminUpdateUser error", err)
-		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "intenal server error"})
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
 

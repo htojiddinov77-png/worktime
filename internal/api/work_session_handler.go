@@ -88,7 +88,7 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 	var req sessionRequest
 
 	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
+	// dec.DisallowUnknownFields()
 
 	if err := dec.Decode(&req); err != nil {
 		wh.logger.Println("Error decoding request:", err)

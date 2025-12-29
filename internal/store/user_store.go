@@ -155,8 +155,9 @@ func (pg *PostgresUserStore) GetUserByEmail(email string) (*User, error) {
 func (pg *PostgresUserStore) UpdateUser(user *User) error {
 	query := `
 		UPDATE users
-		SET name = $1, email = $2, password_hash = $3,  updated_at = NOW()
-		WHERE id = $4
+		SET name = $1, email = $2, password_hash = COALESCE($3, password_hash), 
+		role = COALESCE($4, role), is_active = COALESCE($5, is_active),  updated_at = NOW()
+		WHERE id = $6
 	`
 
 	_, err := pg.db.Exec(query,

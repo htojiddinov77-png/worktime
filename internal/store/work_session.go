@@ -354,7 +354,7 @@ func (pg *PostgresWorkSessionStore) GetSummaryReport(filter SummaryRangeFilter) 
 	`
 
 	args := []any{fromStart, toEnd}
-	pos := 3
+	pos := 3 // third value
 
 	if filter.UserID != nil {
 		overallSQL += fmt.Sprintf(" AND ws.user_id = $%d", pos)

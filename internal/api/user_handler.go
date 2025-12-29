@@ -134,19 +134,7 @@ func (uh *UserHandler) HandleChangePassword(w http.ResponseWriter, r *http.Reque
 	}
 
 	if oldUserPassword == nil {
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
-		return
-	}
-
-	passwordsDomatch, err := oldUserPassword.PasswordHash.Matches(req.OldPassword)
-	if err != nil {
-		uh.logger.Println("Error while comparing passwords")
-		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
-		return
-	}
-
-	if !passwordsDomatch {
-		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "unauthorized"})
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized 1"})
 		return
 	}
 
@@ -156,6 +144,26 @@ func (uh *UserHandler) HandleChangePassword(w http.ResponseWriter, r *http.Reque
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
+	err = oldUserPassword.PasswordHash.Set(req.OldPassword)
+	if err != nil {
+		uh.logger.Println("Error: hashing password")
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	passwordsDomatch, err := oldUserPassword.PasswordHash.Matches(req.OldPassword)
+	if err != nil {
+		uh.logger.Println("Error while comparing passwords", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	if !passwordsDomatch {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "passwords don't match"})
+		return
+	}
+
+	
 
 	err = uh.userStore.UpdateUser(oldUserPassword)
 	if err != nil {
@@ -248,12 +256,12 @@ func (uh *UserHandler) HandleAdminUserUpdate(w http.ResponseWriter, r *http.Requ
 	}
 
 	var input struct {
-		isActive *bool   `json:"is_active"`
+		IsActive *bool   `json:"is_active"`
 		Role     *string `json:"role"`
 	} 
 
 	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
+	// dec.DisallowUnknownFields()
 
 	err = dec.Decode(&input)
 	if err != nil {
@@ -262,7 +270,9 @@ func (uh *UserHandler) HandleAdminUserUpdate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if input.isActive == nil && input.Role == nil {
+	// existingUser := 
+
+	if input.IsActive == nil && input.Role == nil {
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "provie at least one field"})
 		return
 	}
@@ -282,7 +292,7 @@ func (uh *UserHandler) HandleAdminUserUpdate(w http.ResponseWriter, r *http.Requ
 	}
 
 	err = uh.userStore.AdminUserUpdate(userId ,store.AdminUserUpdate{
-		IsActive: input.isActive,
+		IsActive: input.IsActive,
 		Role: input.Role,
 	})
 

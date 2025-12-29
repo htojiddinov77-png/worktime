@@ -39,7 +39,7 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 
 			// User self
 			r.Route("/users/me", func(r chi.Router) {
-				r.Patch("/", app.UserHandler.HandleUpdateUser)
+				r.Patch("/update/", app.UserHandler.HandleUpdateUser)
 				r.Patch("/password/", app.UserHandler.HandleChangePassword)
 			})
 

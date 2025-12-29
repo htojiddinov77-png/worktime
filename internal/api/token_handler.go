@@ -62,6 +62,10 @@ func (th *TokenHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "user is inactive"})
 		return
 	}
+	err = existingUser.PasswordHash.Set(req.Password)
+	if err != nil {
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+	}
 
 
 

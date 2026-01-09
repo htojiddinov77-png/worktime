@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"time"
@@ -48,8 +49,11 @@ type User struct {
 	IsActive     bool      `json:"is_active"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-}
 
+	IsLocked        bool         `json:"-"`
+	LastFailedLogin sql.NullTime `json:"-"`
+	FailedAttempts  int          `json:"-"`
+}
 
 type PostgresUserStore struct {
 	db *sql.DB
@@ -66,6 +70,9 @@ type UserStore interface {
 	UpdatePasswordPlain(userId int64, newPassword string) error
 	UpdateUser(user *User) error
 	ListUsers() ([]User, error)
+	LoginFail(ctx context.Context, email string) error
+	Lockout(ctx context.Context, email string) error
+	Unlock(ctx context.Context, email string) error
 }
 
 func (pg *PostgresUserStore) CreateUser(user *User) error {
@@ -81,7 +88,7 @@ func (pg *PostgresUserStore) CreateUser(user *User) error {
 		user.Email,
 		user.PasswordHash.hash,
 		user.IsActive,
-	).Scan(&user.Id,&user.Role, &user.CreatedAt)
+	).Scan(&user.Id, &user.Role, &user.CreatedAt)
 
 	if err != nil {
 		return err
@@ -151,8 +158,13 @@ func (pg *PostgresUserStore) GetUserByEmail(email string) (*User, error) {
 func (pg *PostgresUserStore) UpdateUser(user *User) error {
 	query := `
 		UPDATE users
-		SET name = $1, email = $2, password_hash = COALESCE($3, password_hash), 
-		role = COALESCE($4, role), is_active = COALESCE($5, is_active),  updated_at = NOW()
+		SET
+			name = $1,
+			email = $2,
+			password_hash = $3,
+			role = $4,
+			is_active = $5,
+			updated_at = NOW()
 		WHERE id = $6
 	`
 
@@ -166,7 +178,6 @@ func (pg *PostgresUserStore) UpdateUser(user *User) error {
 	)
 	return err
 }
-
 
 func (pg *PostgresUserStore) ListUsers() ([]User, error) {
 	query := `
@@ -228,4 +239,37 @@ func (pg *PostgresUserStore) UpdatePasswordPlain(userId int64, newPassword strin
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+func (pg *PostgresUserStore) LoginFail(ctx context.Context, email string) error {
+	query := `
+		UPDATE users
+		SET last_failed_login = NOW(),
+		    failed_attempts = failed_attempts + 1
+		WHERE email = $1
+	`
+	_, err := pg.db.ExecContext(ctx, query, email)
+	return err
+}
+
+func (pg *PostgresUserStore) Lockout(ctx context.Context, email string) error {
+	query := `
+		UPDATE users
+		SET is_locked = true,
+		    failed_attempts = 0
+		WHERE email = $1
+	`
+	_, err := pg.db.ExecContext(ctx, query, email)
+	return err
+}
+
+func (pg *PostgresUserStore) Unlock(ctx context.Context, email string) error {
+	query := `
+		UPDATE users
+		SET failed_attempts = 0,
+		    is_locked = false
+		WHERE email = $1
+	`
+	_, err := pg.db.ExecContext(ctx, query, email)
+	return err
 }

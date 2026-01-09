@@ -3,6 +3,9 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
+
 	"os"
 	"time"
 
@@ -11,24 +14,24 @@ import (
 
 var ErrInvalidToken = errors.New("invalid token")
 
-type Claims struct {
+type UserClaims struct {
+	Id     int64  `json:"id"`
+	Email  string `json:"email"`
+	Role   string `json:"role"`
+	Expiry int64  `json:"exp"`
+	jwt.RegisteredClaims
+}
+type ResetClaims struct {
 	UserID int64  `json:"user_id"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
 	jwt.RegisteredClaims
 }
-type ResetTokenClaims struct {
-	UserID   int64  `json:"user_id"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	IsActive bool   `json:"is_active"`
-	Purpose  string `json:"purpose"`
-	jwt.RegisteredClaims
-}
+
+var AnonymousUser = &UserClaims{}
 
 type JWTManager struct {
 	secretKey []byte
-	issuer    string
 	ttl       time.Duration
 }
 
@@ -40,114 +43,91 @@ func NewJWTManager() *JWTManager {
 
 	return &JWTManager{
 		secretKey: []byte(secret),
-		issuer:    "worktime-api",
 		ttl:       24 * time.Hour,
 	}
 }
 
-func (j *JWTManager) CreateToken(userID int64, email, role string) (string, error) {
-	now := time.Now()
-
-	claims := Claims{
-		UserID: userID,
-		Email:  email,
-		Role:   role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    j.issuer,
-			Subject:   fmt.Sprintf("%d", userID),
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(j.ttl)),
-		},
+func (j *JWTManager) CreateToken(userID int64, email string, role string) (string, error) {
+	claims := jwt.MapClaims{
+		"user_id": userID,
+		"email":   email,
+		"role":    role,
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(j.secretKey)
 }
 
-func (j *JWTManager) VerifyToken(tokenString string) (*Claims, error) {
-	if tokenString == "" {
-		return nil, errors.New("missing token")
-	}
-
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		// Strictly enforce HS256
-		if token.Method != jwt.SigningMethodHS256 {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return j.secretKey, nil
+func (j *JWTManager) VerifyToken(tokenString string) (*UserClaims, error) {
+	claims := &UserClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {
+		return (j.secretKey), nil
 	})
+
 	if err != nil {
 		return nil, err
 	}
-
-	claims, ok := token.Claims.(*Claims)
-	if !ok || !token.Valid {
-		return nil, errors.New("invalid token")
-	}
-
-	if claims.Issuer != j.issuer {
-		return nil, errors.New("invalid token issuer")
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid token")
 	}
 
 	return claims, nil
 }
 
 func (j *JWTManager) CreateResetToken(userID int64, email, role string, isActive bool, ttl time.Duration) (string, time.Time, error) {
-	now := time.Now().UTC()
-	exp := now.Add(ttl)
 
-	claims := ResetTokenClaims{
-		UserID:   userID,
-		Email:    email,
-		Role:     role,
-		IsActive: isActive,
-		Purpose:  "password_reset",
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    j.issuer,
-			Subject:   fmt.Sprintf("%d", userID),
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(exp),
-		},
+	expiresAt := time.Now().Add(ttl)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id":   userID,
+		"email":     email,
+		"role":      role,
+		"is_active": isActive,
+		"exp":       expiresAt.Unix(),
+	})
+
+	tokenString, err := token.SignedString(j.secretKey)
+	if err != nil {
+		return "", time.Time{}, err
 	}
 
-	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	s, err := t.SignedString(j.secretKey)
-	return s, exp, err
+	return tokenString, expiresAt, nil
 }
 
-func (j *JWTManager) ParseResetToken(tokenString string) (*ResetTokenClaims, error) {
-	if tokenString == "" {
+func (j *JWTManager) ParseResetToken(tokenString string) (*ResetClaims, error) {
+	if strings.TrimSpace(tokenString) == "" {
 		return nil, errors.New("missing token")
 	}
 
-	tok, err := jwt.ParseWithClaims(tokenString, &ResetTokenClaims{}, func(t *jwt.Token) (any, error) {
-		// enforce HS256, same as VerifyToken
+	claims := &ResetClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {
 		if t.Method != jwt.SigningMethodHS256 {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			return nil, ErrInvalidToken
 		}
 		return j.secretKey, nil
 	})
-	if err != nil || tok == nil || !tok.Valid {
+
+	if err != nil || !token.Valid {
 		return nil, ErrInvalidToken
 	}
 
-	claims, ok := tok.Claims.(*ResetTokenClaims)
-	if !ok {
-		return nil, ErrInvalidToken
-	}
-
-	if claims.Issuer != j.issuer {
-		return nil, errors.New("invalid token issuer")
-	}
-	if claims.Purpose != "password_reset" {
-		return nil, ErrInvalidToken
-	}
-	if claims.UserID <= 0 || claims.Email == "" {
+	if claims.UserID <= 0 || strings.TrimSpace(claims.Email) == "" {
 		return nil, ErrInvalidToken
 	}
 
 	return claims, nil
 }
 
+func (j *JWTManager) ExtractBearerToken(r *http.Request) (string, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return "", fmt.Errorf("No authorization found in header")
+	}
 
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return "", fmt.Errorf("Invalid authorization header")
+	}
 
+	return parts[1], nil
+}

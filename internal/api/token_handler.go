@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/htojiddinov77-png/worktime/internal/auth"
 	"github.com/htojiddinov77-png/worktime/internal/store"
@@ -25,21 +26,21 @@ func NewTokenHandler(userStore store.UserStore, jwtManager *auth.JWTManager, log
 	}
 }
 
-type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
 func (th *TokenHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 
-	var req loginRequest
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid request payload"})
 		return
 	}
 
 	req.Email = strings.TrimSpace(req.Email)
+	req.Password = strings.TrimSpace(req.Password)
+
 	if req.Email == "" || req.Password == "" {
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "email or password is empty"})
 		return
@@ -53,21 +54,19 @@ func (th *TokenHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if existingUser == nil {
-		// same message as wrong password prevents user enumeration
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
 
-	if !existingUser.IsActive{
+	if !existingUser.IsActive {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "user is inactive"})
 		return
 	}
-	err = existingUser.PasswordHash.Set(req.Password)
-	if err != nil {
-		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+
+	if existingUser.IsLocked && time.Since(existingUser.LastFailedLogin.Time) < time.Hour*24 {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		return
 	}
-
-
 
 	matches, err := existingUser.PasswordHash.Matches(req.Password)
 	if err != nil {
@@ -77,11 +76,17 @@ func (th *TokenHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !matches {
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "password don't match"})
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		th.UserStore.LoginFail(r.Context(), existingUser.Email)
+
+		if existingUser.FailedAttempts+1 > 4 {
+			th.UserStore.Lockout(r.Context(), existingUser.Email)
+		}
 		return
+	} else {
+		th.UserStore.Unlock(r.Context(), existingUser.Email)
 	}
 
-	// IMPORTANT: role comes from DB, not request
 	tokenString, err := th.JWT.CreateToken(existingUser.Id, existingUser.Email, existingUser.Role)
 	if err != nil {
 		th.Logger.Println("CreateToken error:", err)
@@ -91,6 +96,7 @@ func (th *TokenHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
 		"token": tokenString,
-		"role": existingUser.Role,
+		"name": existingUser.Name,
+		"role":  existingUser.Role,
 	})
 }

@@ -54,13 +54,13 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	userID, ok := middleware.GetUserID(r)
-	if !ok || userID <= 0 {
+	u := middleware.GetUser(r)
+	if u.Id <= 0 {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
 
-	user, err := ph.userStore.GetUserById(userID)
+	user, err := ph.userStore.GetUserById(u.Id)
 	if err != nil {
 		ph.logger.Println("error while getting user by id:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})

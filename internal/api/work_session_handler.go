@@ -36,28 +36,13 @@ func NewWorkSessionHandler(
 	}
 }
 
-
-type metadata struct {
-	CurrentPage  int `json:"current_page"`
-	PageSize     int `json:"page_size"`
-	FirstPage    int `json:"first_page"`
-	LastPage     int `json:"last_page"`
-	TotalRecords int `json:"total_records"`
-}
-
-func calculateMetadata(totalRecords, page, pageSize int) metadata {
-	if totalRecords == 0 {
-		return metadata{}
-	}
-	lastPage := (totalRecords + pageSize - 1) / pageSize
-	return metadata{
-		CurrentPage:  page,
-		PageSize:     pageSize,
-		FirstPage:    1,
-		LastPage:     lastPage,
-		TotalRecords: totalRecords,
-	}
-}
+// type metadata struct {
+// 	CurrentPage  int `json:"current_page"`
+// 	PageSize     int `json:"page_size"`
+// 	FirstPage    int `json:"first_page"`
+// 	LastPage     int `json:"last_page"`
+// 	TotalRecords int `json:"total_records"`
+// }
 
 func parseTimeParam(s string) (time.Time, error) {
 	s = strings.TrimSpace(s)
@@ -77,7 +62,6 @@ func parseTimeParam(s string) (time.Time, error) {
 
 	return time.Time{}, errors.New("invalid time format")
 }
-
 
 func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	type sessionRequest struct {
@@ -102,14 +86,15 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 	}
 	req.Note = strings.TrimSpace(req.Note)
 
-	userID, ok := middleware.GetUserID(r)
-	if !ok || userID <= 0 {
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+	user := middleware.GetUser(r)
+	if user == nil {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
 		return
 	}
+	
 
 	ws := &store.WorkSession{
-		UserId:    userID,
+		UserId:    user.Id,
 		ProjectId: req.ProjectID,
 		Note:      req.Note,
 	}
@@ -139,13 +124,13 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	userID, ok := middleware.GetUserID(r)
-	if !ok || userID <= 0 {
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+	user := middleware.GetUser(r)
+	if user == nil {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
 		return
 	}
 
-	err = wh.workSessionStore.StopSession(sessionId, userID)
+	err = wh.workSessionStore.StopSession(sessionId, user.Id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "no active session"})
@@ -163,221 +148,171 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 }
 
 func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.Request) {
-	authUserID, ok := middleware.GetUserID(r)
-	if !ok || authUserID <= 0 {
+	q := r.URL.Query()
+
+	u := middleware.GetUser(r)
+	if u == nil || u.Id <= 0 {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
 
-	role, _ := middleware.GetUserRole(r) // if missing => non-admin
-	q := r.URL.Query()
-
-	var (
-		userIDPtr    *int64
-		projectIDPtr *int64
-		activePtr    *bool
-		startFromPtr *time.Time
-		startToPtr   *time.Time
-		searchPtr    *string
-	)
-
-	// Admin can filter by user_id; non-admin forced to self
-	if s := strings.TrimSpace(q.Get("user_id")); s != "" {
-		v, err := strconv.ParseInt(s, 10, 64)
-		if err != nil || v <= 0 {
-			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid user_id"})
-			return
-		}
-		userIDPtr = &v
+	isAdmin := false
+	if u.Role == "admin" {
+		isAdmin = true
 	}
 
-	// project_id
+	var filter store.WorkSessionFilter
+
+	filter.Page = utils.ReadInt(q, "page", 1)
+	filter.PageSize = utils.ReadInt(q, "page_size", 50)
+
+	if s := strings.TrimSpace(q.Get("search")); s != "" {
+		filter.Search = &s
+	}
+
+	if s := strings.TrimSpace(q.Get("active")); s != "" {
+		v, err := strconv.ParseBool(s)
+		if err != nil {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "active must be true or false"})
+			return
+		}
+		filter.Active = &v
+	}
+
 	if s := strings.TrimSpace(q.Get("project_id")); s != "" {
 		v, err := strconv.ParseInt(s, 10, 64)
 		if err != nil || v <= 0 {
 			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid project_id"})
 			return
 		}
-		projectIDPtr = &v
+		filter.ProjectID = &v
 	}
 
-	// status: active|inactive OR active=true/false
-	if status := strings.ToLower(strings.TrimSpace(q.Get("status"))); status != "" {
-		switch status {
-		case "active":
-			v := true
-			activePtr = &v
-		case "inactive":
-			v := false
-			activePtr = &v
-		default:
-			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid status (use active or inactive)"})
-			return
-		}
-	} else if s := strings.TrimSpace(q.Get("active")); s != "" {
-		v, err := strconv.ParseBool(s)
-		if err != nil {
-			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid active (use true/false)"})
-			return
-		}
-		activePtr = &v
-	}
-
-	// start_from/start_to: RFC3339 OR YYYY-MM-DD
-	if s := strings.TrimSpace(q.Get("start_from")); s != "" {
-		t, err := parseTimeParam(s)
-		if err != nil {
-			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid start_from (use RFC3339 or YYYY-MM-DD)"})
-			return
-		}
-		startFromPtr = &t
-	}
-	if s := strings.TrimSpace(q.Get("start_to")); s != "" {
-		t, err := parseTimeParam(s)
-		if err != nil {
-			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid start_to (use RFC3339 or YYYY-MM-DD)"})
-			return
-		}
-		startToPtr = &t
-	}
-
-	// search
-	if s := strings.TrimSpace(q.Get("search")); s != "" {
-		searchPtr = &s
-	}
-
-	// page/page_size (book)
-	page := 1
-	if s := strings.TrimSpace(q.Get("page")); s != "" {
-		v, err := strconv.Atoi(s)
-		if err != nil || v < 1 {
-			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid page (>=1)"})
-			return
-		}
-		page = v
-	}
-
-	pageSize := 50
-	if s := strings.TrimSpace(q.Get("page_size")); s != "" {
-		v, err := strconv.Atoi(s)
-		if err != nil || v < 1 || v > 200 {
-			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid page_size (1..200)"})
-			return
-		}
-		pageSize = v
-	}
-
-	// sort (store enforces allowlist; we just provide default)
-	sort := strings.TrimSpace(q.Get("sort"))
-	if sort == "" {
-		sort = "-start_at"
-	}
-
-	// Ownership enforcement
-	if role != "admin" {
-		userIDPtr = &authUserID
-	}
-
-	filter := store.WorkSessionFilter{
-		UserID:    userIDPtr,
-		ProjectID: projectIDPtr,
-		Active:    activePtr,
-		StartFrom: startFromPtr,
-		StartTo:   startToPtr,
-		Search:   searchPtr,
-
-		Page:     page,
-		PageSize: pageSize,
-		Sort:     sort,
-	}
-
-	rows, total, err := wh.workSessionStore.ListSessions(filter)
-	if err != nil {
-		wh.logger.Println("ListSessions error:", err)
-		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
-		return
-	}
-
-	utils.WriteJson(w, http.StatusOK, utils.Envelope{
-		"sessions": rows,
-		"metadata": calculateMetadata(total, page, pageSize),
-	})
-}
-
-func (wh *WorkSessionHandler) HandleSummaryReport(w http.ResponseWriter, r *http.Request) {
-	authUserID, ok := middleware.GetUserID(r)
-	if !ok || authUserID <= 0 {
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
-		return
-	}
-
-	role, _ := middleware.GetUserRole(r)
-
-	fromStr := strings.TrimSpace(r.URL.Query().Get("from"))
-	toStr := strings.TrimSpace(r.URL.Query().Get("to"))
-	if fromStr == "" || toStr == "" {
-		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "missing from/to (YYYY-MM-DD)"})
-		return
-	}
-
-	fromDate, err := time.Parse("2006-01-02", fromStr)
-	if err != nil {
-		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid from (YYYY-MM-DD)"})
-		return
-	}
-	toDate, err := time.Parse("2006-01-02", toStr)
-	if err != nil {
-		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid to (YYYY-MM-DD)"})
-		return
-	}
-
-	// user_id: non-admin forced to auth user, admin optional
-	var uidPtr *int64
-	if role != "admin" {
-		uidPtr = &authUserID
-	} else {
-		if s := strings.TrimSpace(r.URL.Query().Get("user_id")); s != "" {
+	if isAdmin {
+		if s := strings.TrimSpace(q.Get("user_id")); s != "" {
 			v, err := strconv.ParseInt(s, 10, 64)
 			if err != nil || v <= 0 {
 				utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid user_id"})
 				return
 			}
-			uidPtr = &v
+			filter.UserID = &v
 		}
+	} else {
+		uid := u.Id
+		filter.UserID = &uid
 	}
 
-	
-	var pidPtr *int64
-	if s := strings.TrimSpace(r.URL.Query().Get("project_id")); s != "" {
+	// validate paging (Sort is empty, so sort validation passes)
+	if err := filter.Validate(); err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": err.Error()})
+		return
+	}
+
+	rows, total, err := wh.workSessionStore.ListSessions(filter)
+	if err != nil {
+		wh.logger.Println("Error listing sessions:", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	meta := store.CalculateMetadata(total, filter.Page, filter.PageSize)
+
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{
+		"sessions": rows,
+		"metadata": meta,
+	})
+}
+
+func (wh *WorkSessionHandler) HandleGetSummaryReport(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	// 1) Auth
+	authUser := middleware.GetUser(r)
+	if authUser == nil || authUser.Id <= 0 {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		return
+	}
+
+	isAdmin := false
+	if authUser.Role == "admin" {
+		isAdmin = true
+	}
+
+	// 2) Required dates: from, to
+	fromStr := strings.TrimSpace(q.Get("from"))
+	toStr := strings.TrimSpace(q.Get("to"))
+
+	if fromStr == "" || toStr == "" {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "from and to are required"})
+		return
+	}
+
+	fromDate, err := parseTimeParam(fromStr) // your helper supports YYYY-MM-DD
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid from"})
+		return
+	}
+
+	toDate, err := parseTimeParam(toStr)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid to"})
+		return
+	}
+
+	// 3) Optional project_id
+	var requestedProjectID *int64
+	if s := strings.TrimSpace(q.Get("project_id")); s != "" {
 		v, err := strconv.ParseInt(s, 10, 64)
 		if err != nil || v <= 0 {
 			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid project_id"})
 			return
 		}
-		pidPtr = &v
+		requestedProjectID = &v
 	}
 
+	// 4) Optional user_id (admin only)
+	var requestedUserID *int64
+	if s := strings.TrimSpace(q.Get("user_id")); s != "" {
+		v, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || v <= 0 {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid user_id"})
+			return
+		}
+		requestedUserID = &v
+	}
+
+	// 5) Decide which user_id we actually allow for the report
+	var allowedUserID *int64
+	if isAdmin {
+		// admin:
+		// - if user_id is provided => report for that user
+		// - if user_id is missing  => report for all users (nil)
+		allowedUserID = requestedUserID
+	} else {
+		// normal user: force to self no matter what query says
+		myID := authUser.Id
+		allowedUserID = &myID
+	}
+
+	// 6) Build store filter (store layer doesn't care about roles)
 	filter := store.SummaryRangeFilter{
-		UserID:    uidPtr,
-		ProjectID: pidPtr,
+		UserID:    allowedUserID,
+		ProjectID: requestedProjectID,
 		FromDate:  fromDate,
 		ToDate:    toDate,
 	}
 
-	rep, err := wh.workSessionStore.GetSummaryReport(filter)
+	// 7) Fetch report
+	report, err := wh.workSessionStore.GetSummaryReport(filter)
 	if err != nil {
 		wh.logger.Println("GetSummaryReport error:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
 
-
-	utils.WriteJson(w, http.StatusOK, utils.Envelope{
-		"from":       rep.From,
-		"to":         rep.To,
-		"filters":    rep.Filters,
-		"user":       rep.User,
-		"overall":    rep.Overall,
-		"by_project": rep.ByProject,
-	})
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{"report": report})
 }
+
+
+
+

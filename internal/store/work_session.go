@@ -33,37 +33,16 @@ type WorkSessionRow struct {
 	DerivedStatus string `json:"status"` // "active" if end_at IS NULL else "inactive"
 }
 
-// Book-ish filter inputs.
-// Note: keep pointers for optional filters.
+
 type WorkSessionFilter struct {
-	// Ownership / filters
+	Filter
+
 	UserID    *int64
 	ProjectID *int64
-
-	// If set:
-	//   true  => only active (end_at IS NULL)
-	//   false => only inactive (end_at IS NOT NULL)
-	Active *bool
-
-	// Start date range filter on start_at
-	StartFrom *time.Time
-	StartTo   *time.Time
-
-	// Optional text search (matches project name OR user name/email OR note)
-	Search *string
-
-	// Book-style pagination + sorting
-	Page     int
-	PageSize int
-	Sort     string // e.g. "start_at", "-start_at", "created_at", "-created_at", "id", "-id"
+	Active    *bool
+	Search    *string
 }
 
-type DailySummary struct {
-	Date          string `json:"date"`
-	UserID        int64  `json:"user_id"`
-	TotalSessions int    `json:"total_sessions"`
-	TotalMinutes  int    `json:"total_minutes"`
-}
 
 type SummaryRangeFilter struct {
 	UserID    *int64
@@ -78,10 +57,12 @@ type ReportUser struct {
 	UserEmail string `json:"user_email"`
 }
 
+
 type OverallSummary struct {
 	TotalSessions int `json:"total_sessions"`
 	TotalMinutes  int `json:"total_minutes"`
 }
+
 
 type ProjectSummary struct {
 	ProjectID     int64  `json:"project_id"`
@@ -90,22 +71,25 @@ type ProjectSummary struct {
 	TotalMinutes  int    `json:"total_minutes"`
 }
 
+
 type SummaryFilters struct {
 	UserID    *int64 `json:"user_id"`
 	ProjectID *int64 `json:"project_id"`
 }
+
 
 type SummaryReport struct {
 	From    string         `json:"from"`
 	To      string         `json:"to"`
 	Filters SummaryFilters `json:"filters"`
 
-	// Only set when reporting for a single user (non-admin or admin + user_id)
+	
 	User *ReportUser `json:"user,omitempty"`
 
 	Overall   OverallSummary   `json:"overall"`
 	ByProject []ProjectSummary `json:"by_project"`
 }
+
 
 type WorkSessionStore interface {
 	StartSession(*WorkSession) error
@@ -115,6 +99,7 @@ type WorkSessionStore interface {
 	// book-style: return total records too (for pagination metadata)
 	ListSessions(filter WorkSessionFilter) ([]WorkSessionRow, int, error)
 }
+
 
 func (pg *PostgresWorkSessionStore) StartSession(ws *WorkSession) error {
 	query := `
@@ -152,40 +137,49 @@ func (pg *PostgresWorkSessionStore) StopSession(sessionID int64, userID int64) e
 }
 
 func (pg *PostgresWorkSessionStore) ListSessions(filter WorkSessionFilter) ([]WorkSessionRow, int, error) {
-	// Defaults (book-ish)
-	if filter.Page < 1 {
-		filter.Page = 1
-	}
-	if filter.PageSize <= 0 || filter.PageSize > 200 {
-		filter.PageSize = 50
-	}
 
-	limit := filter.PageSize
-	offset := (filter.Page - 1) * filter.PageSize
+	// Pagination: LIMIT is page size, OFFSET is how many rows to skip.
+	limit := filter.Limit()
+	offset := filter.Offset()
 
-	// SAFE sort allowlist (book rule)
-	sortSQL := "ws.start_at DESC, ws.id DESC"
-	switch filter.Sort {
-	case "start_at":
-		sortSQL = "ws.start_at ASC, ws.id ASC"
-	case "-start_at", "":
-		sortSQL = "ws.start_at DESC, ws.id DESC"
-	case "created_at":
-		sortSQL = "ws.created_at ASC, ws.id ASC"
-	case "-created_at":
-		sortSQL = "ws.created_at DESC, ws.id DESC"
-	case "id":
-		sortSQL = "ws.id ASC"
-	case "-id":
-		sortSQL = "ws.id DESC"
-	default:
-		// fallback safe
-		sortSQL = "ws.start_at DESC, ws.id DESC"
+	// We pass optional filters as NULL when they are not provided.
+	// In SQL we use: ($1 IS NULL OR column = $1)
+	// so if the value is NULL -> filter is ignored.
+	var userID any
+	if filter.UserID != nil {
+		userID = *filter.UserID
 	}
 
-	base := `
+	var projectID any
+	if filter.ProjectID != nil {
+		projectID = *filter.ProjectID
+	}
+
+	// Search is optional. If provided, we convert it into a pattern like: "%text%"
+	// and use ILIKE for case-insensitive search across multiple columns.
+	var search any
+	if filter.Search != nil {
+		s := strings.TrimSpace(*filter.Search)
+		if s != "" {
+			search = "%" + s + "%"
+		}
+	}
+
+	// Active filter:
+	// - nil   => don't filter by active/inactive
+	// - true  => only sessions with end_at IS NULL
+	// - false => only sessions with end_at IS NOT NULL
+	var active any
+	if filter.Active != nil {
+		active = *filter.Active
+	}
+
+	query := `
 		SELECT
+			-- COUNT(*) OVER() returns total rows ignoring LIMIT/OFFSET.
+			-- This allows us to return pagination metadata without running a second COUNT query.
 			COUNT(*) OVER() AS total_records,
+
 			ws.id,
 			ws.user_id,
 			ws.project_id,
@@ -196,117 +190,103 @@ func (pg *PostgresWorkSessionStore) ListSessions(filter WorkSessionFilter) ([]Wo
 			p.name AS project_name,
 			u.name AS user_name,
 			u.email AS user_email,
+
+			-- Derived status is calculated from end_at:
+			-- end_at NULL => active, otherwise inactive.
 			CASE WHEN ws.end_at IS NULL THEN 'active' ELSE 'inactive' END AS status
 		FROM work_sessions ws
 		JOIN projects p ON ws.project_id = p.id
 		JOIN users u ON ws.user_id = u.id
-		WHERE 1=1
+		WHERE
+			-- Optional user filter
+			($1::bigint IS NULL OR ws.user_id = $1)
+
+			-- Optional project filter
+			AND ($2::bigint IS NULL OR ws.project_id = $2)
+
+			-- Optional search filter (matches project/user/note)
+			AND (
+				$3::text IS NULL OR (
+					p.name ILIKE $3 OR
+					u.name ILIKE $3 OR
+					u.email ILIKE $3 OR
+					COALESCE(ws.note,'') ILIKE $3
+				)
+			)
+
+			-- Optional active filter (true => end_at IS NULL, false => end_at IS NOT NULL)
+			AND (
+				$4::boolean IS NULL OR
+				($4 = true  AND ws.end_at IS NULL) OR
+				($4 = false AND ws.end_at IS NOT NULL)
+			)
+
+		-- Fixed ordering: newest start first, and tie-breaker by id.
+		ORDER BY ws.start_at DESC, ws.id DESC
+
+		-- Pagination
+		LIMIT $5 OFFSET $6
 	`
 
-	var (
-		sb   strings.Builder
-		args []any
-		pos  = 1
+	rows, err := pg.db.Query(
+		query,
+		userID,
+		projectID,
+		search,
+		active,
+		limit,
+		offset,
 	)
-
-	sb.WriteString(base)
-
-	add := func(cond string, v any) {
-		sb.WriteString(fmt.Sprintf(" AND "+cond, pos))
-		args = append(args, v)
-		pos++
-	}
-
-	if filter.UserID != nil {
-		add("ws.user_id = $%d", *filter.UserID)
-	}
-	if filter.ProjectID != nil {
-		add("ws.project_id = $%d", *filter.ProjectID)
-	}
-	if filter.Active != nil {
-		if *filter.Active {
-			sb.WriteString(" AND ws.end_at IS NULL")
-		} else {
-			sb.WriteString(" AND ws.end_at IS NOT NULL")
-		}
-	}
-	if filter.StartFrom != nil {
-		add("ws.start_at >= $%d", *filter.StartFrom)
-	}
-	if filter.StartTo != nil {
-		add("ws.start_at <= $%d", *filter.StartTo)
-	}
-	if filter.Search != nil {
-		s := strings.TrimSpace(*filter.Search)
-		if s != "" {
-			like := "%" + s + "%"
-			sb.WriteString(fmt.Sprintf(`
-				AND (
-					p.name ILIKE $%d OR
-					u.name ILIKE $%d OR
-					u.email ILIKE $%d OR
-					COALESCE(ws.note,'') ILIKE $%d
-				)
-			`, pos, pos+1, pos+2, pos+3))
-			args = append(args, like, like, like, like)
-			pos += 4
-		}
-	}
-
-	sb.WriteString(" ORDER BY " + sortSQL)
-	sb.WriteString(fmt.Sprintf(" LIMIT $%d OFFSET $%d", pos, pos+1))
-	args = append(args, limit, offset)
-
-	rows, err := pg.db.Query(sb.String(), args...)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
 
+	// Preallocate slice capacity to avoid extra allocations.
 	out := make([]WorkSessionRow, 0, limit)
 	total := 0
 
 	for rows.Next() {
 		var (
 			row          WorkSessionRow
-			note         sql.NullString
-			totalRecords int
+			note         sql.NullString // ws.note can be NULL in DB
+			totalRecords int            // same number for every row (from COUNT(*) OVER())
 		)
 
-		err := rows.Scan(
-			&totalRecords,
+		if err := rows.Scan(
+			&totalRecords,       // total records for pagination
 			&row.Id,
 			&row.UserId,
 			&row.ProjectId,
 			&row.StartAt,
 			&row.EndAt,
-			&note,
+			&note,               // scan nullable note
 			&row.CreatedAt,
 			&row.ProjectName,
 			&row.UserName,
 			&row.UserEmail,
 			&row.DerivedStatus,
-		)
-		if err != nil {
+		); err != nil {
 			return nil, 0, err
 		}
 
+		// Convert NULL note to empty string in response.
 		if note.Valid {
 			row.Note = note.String
 		} else {
 			row.Note = ""
 		}
 
+		// totalRecords is identical for all rows; we just keep the last seen value.
 		total = totalRecords
 		out = append(out, row)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, 0, err
-	}
-
-	return out, total, nil
+	// rows.Err() reports any scan/iteration errors that happened during the loop.
+	return out, total, rows.Err()
 }
+
+
 
 func (pg *PostgresWorkSessionStore) GetSummaryReport(filter SummaryRangeFilter) (*SummaryReport, error) {
 	// Normalize dates to [fromStart, toEnd) in UTC

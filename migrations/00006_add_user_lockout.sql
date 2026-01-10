@@ -8,7 +8,7 @@ ADD COLUMN IF NOT EXISTS failed_attempts INT NOT NULL DEFAULT 0;
 
 
 ALTER TABLE users
-ADD CONSTRAINT IF NOT EXISTS users_failed_attempts_non_negative -- constraint is rule 
+ADD CONSTRAINT users_failed_attempts_non_negative -- constraint is rule 
 CHECK (failed_attempts >= 0);
 
 -- +goose StatementEnd

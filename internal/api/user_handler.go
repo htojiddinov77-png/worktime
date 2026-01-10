@@ -221,7 +221,7 @@ func (uh *UserHandler) HandleListUsers(w http.ResponseWriter, r *http.Request){
 	var input store.ListUserInput
 
 	user := middleware.GetUser(r)
-	if user == nil ||user.Role != "admin" || user == auth.AnonymousUser {
+	if user == nil || user.Role != "admin"{
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
@@ -247,10 +247,23 @@ func (uh *UserHandler) HandleListUsers(w http.ResponseWriter, r *http.Request){
 	input.IsActive = is_active
 	input.IsLocked = is_locked
 
+	if string(input.Sort[0]) == string("-") {
+		input.Sort = input.Sort[1:] + " DESC"
+	}
 
-	
+	users, metadata, err := uh.userStore.GetAllUsers(r.Context(), input)
+	if err != nil {
+		uh.logger.Println("error getting all users", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
 
+	if users == nil {
+		utils.WriteJson(w, http.StatusOK, utils.Envelope{"result": []any{}, "message": "no user found"})
+		return
+	}
 
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{"result": users, "metadata": metadata})
 }
 
 func (uh *UserHandler) HandleGenerateResetToken(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -75,9 +76,9 @@ type UserStore interface {
 	CreateUser(*User) error
 	GetUserById(id int64) (*User, error)
 	GetUserByEmail(email string) (*User, error)
+	GetAllUsers(ctx context.Context, input ListUserInput) ([]*User, *Metadata, error)
 	UpdatePasswordPlain(userId int64, newPassword string) error
 	UpdateUser(user *User) error
-	ListUsers() ([]User, error)
 	LoginFail(ctx context.Context, email string) error
 	Lockout(ctx context.Context, email string) error
 	Unlock(ctx context.Context, email string) error
@@ -187,38 +188,69 @@ func (pg *PostgresUserStore) UpdateUser(user *User) error {
 	return err
 }
 
-func (pg *PostgresUserStore) ListUsers() ([]User, error) {
-	query := `
-        SELECT id, name, email, role, is_active, created_at, updated_at
-        FROM users
-        ORDER BY id ASC
-    `
-	rows, err := pg.db.Query(query)
+
+func (pg *PostgresUserStore) GetAllUsers(ctx context.Context, input ListUserInput) ([]*User, *Metadata, error) {
+	result := []*User{}
+	metadata := Metadata{}
+	totalRecords := 0
+
+	query := fmt.Sprintf(`
+	SELECT COUNT(*) OVER(), id, email, name, role, is_active, is_locked, last_failed_login, failed_attempts, created_at
+	FROM users
+	WHERE (
+	$1 = '' OR
+	email ILIKE $1 || '%%' OR
+	name ILIKE $1 || '%%' 
+	)
+	AND ($2 IS False OR is_active = $2)
+	AND ($3 IS False OR is_locked = $3)
+	AND ($4 = '' OR role = $4)
+	ORDER BY %s, id ASC
+	LIMIT $5 OFFSET $6`, input.Sort)
+
+	rows, err := pg.db.QueryContext(
+		ctx, query,
+		input.Search,
+		input.IsActive,
+		input.IsLocked,
+		input.UserRole,
+		input.Limit(),
+		input.Offset(),
+	)
+
 	if err != nil {
-		return nil, err
+		if err == sql.ErrNoRows {
+			return nil, nil, nil
+		}
+		return nil, nil, err
 	}
+
 	defer rows.Close()
 
-	var out []User
 	for rows.Next() {
-		var u User
-		if err := rows.Scan(
-			&u.Id,
-			&u.Name,
-			&u.Email,
-			&u.Role,
-			&u.IsActive,
-			&u.CreatedAt,
-			&u.UpdatedAt,
-		); err != nil {
-			return nil, err
+		user := &User{}
+
+		err = rows.Scan(
+			&totalRecords,
+			&user.Id,
+			&user.Email,
+			&user.Name,
+			&user.Role,
+			&user.IsActive,
+			&user.IsLocked,
+			&user.LastFailedLogin,
+			&user.FailedAttempts,
+			&user.CreatedAt,
+		)
+		if err != nil {
+			return nil, nil, err
 		}
-		out = append(out, u)
+		result = append(result, user)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return out, nil
+
+	metadata = CalculateMetadata(totalRecords, int(input.Page), int(input.PageSize))
+
+	return result, &metadata, nil
 }
 
 func (pg *PostgresUserStore) UpdatePasswordPlain(userId int64, newPassword string) error {

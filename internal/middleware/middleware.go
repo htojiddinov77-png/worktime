@@ -54,7 +54,6 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 
 		r = SetUser(r, claims)
 		next.ServeHTTP(w, r)
-		return
 	})
 }
 

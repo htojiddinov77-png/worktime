@@ -29,18 +29,17 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 			r.Get("/projects", app.ProjectHandler.HandleListProjects) // checked
 
 			// Work sessions
-			r.Route("/work-sessions", func(r chi.Router) {
+			r.Route("/work-sessions", func(r chi.Router){
 				r.Post("/start/", app.WorkSessionHandler.HandleStartSession)
 				r.Patch("/stop/{id}/", app.WorkSessionHandler.HandleStopSession)
 			})
 
 			r.Patch("/users/{id}/", app.UserHandler.HandleUpdateUser)
 	
-
 			// Admin-only
 			r.Group(func(r chi.Router) {
 				r.Post("/admin/reset-tokens/", app.UserHandler.HandleGenerateResetToken) 
-				 // r.Get("/admin/users/", app.UserHandler.HandleAdminListUsers) 
+				r.Get("/admin/users/", app.UserHandler.HandleListUsers) 
 				r.Post("/projects/", app.ProjectHandler.HandleCreateProject) 
 			})
 		})

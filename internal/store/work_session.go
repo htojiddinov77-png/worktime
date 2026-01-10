@@ -221,7 +221,7 @@ func (pg *PostgresWorkSessionStore) ListSessions(filter WorkSessionFilter) ([]Wo
 				($4 = false AND ws.end_at IS NOT NULL)
 			)
 
-		-- Fixed ordering: newest start first, and tie-breaker by id.
+	
 		ORDER BY ws.start_at DESC, ws.id DESC
 
 		-- Pagination

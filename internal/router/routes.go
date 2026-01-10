@@ -40,7 +40,7 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 			// Admin-only
 			r.Group(func(r chi.Router) {
 				r.Post("/admin/reset-tokens/", app.UserHandler.HandleGenerateResetToken) 
-				r.Get("/admin/users/", app.UserHandler.HandleAdminListUsers) 
+				 // r.Get("/admin/users/", app.UserHandler.HandleAdminListUsers) 
 				r.Post("/projects/", app.ProjectHandler.HandleCreateProject) 
 			})
 		})

@@ -59,6 +59,14 @@ type PostgresUserStore struct {
 	db *sql.DB
 }
 
+type ListUserInput struct {
+	Search   string
+	UserRole string
+	IsActive *bool
+	IsLocked *bool
+	Filter
+}
+
 func NewPostgresUserStore(db *sql.DB) *PostgresUserStore {
 	return &PostgresUserStore{db: db}
 }

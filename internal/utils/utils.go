@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/url"
+	
 	"strconv"
 	"strings"
 
@@ -37,8 +37,8 @@ func ReadIdParam(r *http.Request) (int64, error) {
 	return id, nil
 }
 
-func ReadInt(q url.Values, key string, defaultValue int) int {
-	s := strings.TrimSpace(q.Get(key))
+func ReadInt(r *http.Request, key string, defaultValue int) int {
+	s := r.URL.Query().Get(key)
 	if s == "" {
 		return defaultValue
 	}
@@ -49,4 +49,36 @@ func ReadInt(q url.Values, key string, defaultValue int) int {
 	}
 
 	return i
+}
+
+func ReadString(r *http.Request, key string, defaultValue string) string {
+	s := r.URL.Query().Get(key)
+	if s == "" {
+		return defaultValue
+	}
+
+	return s
+}
+
+func ReadBool(r *http.Request, key string) (*bool, error) {
+	str := r.URL.Query().Get(key)
+
+	if str == "" {
+		return nil, nil
+	}
+
+	b, err := strconv.ParseBool(str)
+	if err != nil {
+		return nil, errors.New("invalid boolean field provided in query param")
+	}
+	return &b, nil
+}
+
+func ReadCSV(r *http.Request, key string, defaultValue []string) []string {
+	csv := r.URL.Query().Get(key)
+	if csv == "" {
+		return defaultValue
+	}
+
+	return strings.Split(csv, ",")
 }

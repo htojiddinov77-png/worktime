@@ -3,83 +3,58 @@ package middleware
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	"github.com/htojiddinov77-png/worktime/internal/auth"
+	"github.com/htojiddinov77-png/worktime/internal/utils"
 )
 
 type contextKey string
 
-const (
-	userIDContextKey   contextKey = "userID"
-	userRoleContextKey contextKey = "userRole"
-	// userEmailContextKey contextKey = "userEmail" // optional
-)
+const UserContextKey = contextKey("user")
 
 type Middleware struct {
 	JWT *auth.JWTManager
 }
 
-func GetUserID(r *http.Request) (int64, bool) {
-	userID, ok := r.Context().Value(userIDContextKey).(int64)
-	return userID, ok
+func SetUser(r *http.Request, user *auth.UserClaims) *http.Request {
+	ctx := context.WithValue(r.Context(), UserContextKey, user)
+	return r.WithContext(ctx)
 }
 
-func GetUserRole(r *http.Request) (string, bool) {
-	role, ok := r.Context().Value(userRoleContextKey).(string)
-	return role, ok
+func GetUser(r *http.Request) *auth.UserClaims {
+	user, ok := r.Context().Value(UserContextKey).(*auth.UserClaims)
+	if !ok {
+		panic("missing user in request")
+	}
+	return user
 }
-
-// func GetUserEmail(r *http.Request) (string, bool) { ... } // optional
 
 func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if m == nil || m.JWT == nil {
-			http.Error(w, "server misconfigured", http.StatusInternalServerError)
-			return
-		}
-
+		w.Header().Add("Vary", "Authorization")
 		authHeader := r.Header.Get("Authorization")
+
 		if authHeader == "" {
-			http.Error(w, "missing auth header", http.StatusUnauthorized)
+			r = SetUser(r, auth.AnonymousUser)
+			next.ServeHTTP(w, r)
 			return
 		}
 
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			http.Error(w, "invalid authorization header", http.StatusUnauthorized)
-			return
-		}
-
-		tokenString := strings.TrimSpace(parts[1])
-		if tokenString == "" {
-			http.Error(w, "invalid authorization header", http.StatusUnauthorized)
+		tokenString, err := m.JWT.ExtractBearerToken(r)
+		if err != nil {
+			utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": err.Error()})
 			return
 		}
 
 		claims, err := m.JWT.VerifyToken(tokenString)
 		if err != nil {
-			http.Error(w, "invalid or expired token", http.StatusUnauthorized)
+			utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": err.Error()})
 			return
 		}
 
-		// Store auth info in context
-		ctx := context.WithValue(r.Context(), userIDContextKey, claims.UserID)
-		ctx = context.WithValue(ctx, userRoleContextKey, claims.Role)
-		// ctx = context.WithValue(ctx, userEmailContextKey, claims.Email) // optional
-
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-func RequireAdmin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role, ok := GetUserRole(r)
-		if !ok || role != "admin" {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
+		r = SetUser(r, claims)
 		next.ServeHTTP(w, r)
+		return
 	})
 }
 

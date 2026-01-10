@@ -217,18 +217,40 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 
 
 
-func (uh *UserHandler) HandleAdminListUsers(w http.ResponseWriter, r *http.Request){
-	users, err := uh.userStore.ListUsers()
-	if err != nil {
-		uh.logger.Println("ListUsers error:", err)
-		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+func (uh *UserHandler) HandleListUsers(w http.ResponseWriter, r *http.Request){
+	var input store.ListUserInput
+
+	user := middleware.GetUser(r)
+	if user == nil ||user.Role != "admin" || user == auth.AnonymousUser {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
 
-	utils.WriteJson(w, http.StatusOK, utils.Envelope{
-		"users": users,
-		"count": len(users),
-	})
+	input.Search = utils.ReadString(r, "search", "")
+	input.Filter.Page = utils.ReadInt(r, "page", 1)
+	input.Filter.PageSize = utils.ReadInt(r, "page_size", 50)
+	input.Filter.Sort = utils.ReadString(r, "sort", "id")
+	input.Filter.SortSafeList = []string{"id", "email", "name"}
+
+	is_active, err := utils.ReadBool(r, "is_active")
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "bad request"})
+		return
+	}
+
+	is_locked, err := utils.ReadBool(r, "is_locked")
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "bad request"})
+		return
+	}
+
+	input.IsActive = is_active
+	input.IsLocked = is_locked
+
+
+	
+
+
 }
 
 func (uh *UserHandler) HandleGenerateResetToken(w http.ResponseWriter, r *http.Request) {

@@ -163,8 +163,8 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 
 	var filter store.WorkSessionFilter
 
-	filter.Page = utils.ReadInt(q, "page", 1)
-	filter.PageSize = utils.ReadInt(q, "page_size", 50)
+//	filter.Page = utils.ReadInt(q, "page", 1)
+ // 	filter.PageSize = utils.ReadInt(q, "page_size", 50)
 
 	if s := strings.TrimSpace(q.Get("search")); s != "" {
 		filter.Search = &s

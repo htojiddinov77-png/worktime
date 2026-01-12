@@ -43,12 +43,11 @@ func parseTimeParam(s string) (time.Time, error) {
 		return time.Time{}, errors.New("empty time")
 	}
 
-	// Try RFC3339 first
+	
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t, nil
 	}
 
-	// Try YYYY-MM-DD (treat as start of day UTC)
 	if d, err := time.Parse("2006-01-02", s); err == nil {
 		return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC), nil
 	}
@@ -65,7 +64,7 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 	var req sessionRequest
 
 	dec := json.NewDecoder(r.Body)
-	// dec.DisallowUnknownFields()
+
 
 	if err := dec.Decode(&req); err != nil {
 		wh.logger.Println("Error decoding request:", err)
@@ -92,7 +91,7 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 		Note:      req.Note,
 	}
 
-	if err := wh.workSessionStore.StartSession(ws); err != nil {
+	if err := wh.workSessionStore.StartSession(r.Context(), ws); err != nil {
 		wh.logger.Printf("Error starting session: %v", err)
 		if strings.Contains(err.Error(), "one_active_session_per_user") {
 			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{
@@ -123,7 +122,7 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	err = wh.workSessionStore.StopSession(sessionId, user.Id)
+	err = wh.workSessionStore.StopSession(r.Context(), sessionId, user.Id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "no active session"})
@@ -145,6 +144,7 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 
 	u := middleware.GetUser(r)
 	if u == nil || u.Id <= 0 {
+	
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
@@ -156,8 +156,8 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 
 	var filter store.WorkSessionFilter
 
-//	filter.Page = utils.ReadInt(q, "page", 1)
- // 	filter.PageSize = utils.ReadInt(q, "page_size", 50)
+	filter.Page = utils.ReadInt(r, "page", 1)
+ 	filter.PageSize = utils.ReadInt(r, "page_size", 50)
 
 	if s := strings.TrimSpace(q.Get("search")); s != "" {
 		filter.Search = &s
@@ -195,13 +195,13 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 		filter.UserID = &uid
 	}
 
-	// validate paging (Sort is empty, so sort validation passes)
+	
 	if err := filter.Validate(); err != nil {
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": err.Error()})
 		return
 	}
 
-	rows, total, err := wh.workSessionStore.ListSessions(filter)
+	rows, total, err := wh.workSessionStore.ListSessions(r.Context(), filter)
 	if err != nil {
 		wh.logger.Println("Error listing sessions:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
@@ -296,7 +296,7 @@ func (wh *WorkSessionHandler) HandleGetSummaryReport(w http.ResponseWriter, r *h
 	}
 
 	// 7) Fetch report
-	report, err := wh.workSessionStore.GetSummaryReport(filter)
+	report, err := wh.workSessionStore.GetSummaryReport(r.Context(), filter)
 	if err != nil {
 		wh.logger.Println("GetSummaryReport error:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})

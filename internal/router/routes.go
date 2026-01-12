@@ -32,6 +32,7 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 			r.Route("/work-sessions", func(r chi.Router){
 				r.Post("/start/", app.WorkSessionHandler.HandleStartSession)
 				r.Patch("/stop/{id}/", app.WorkSessionHandler.HandleStopSession)
+				r.Get("/list/", app.WorkSessionHandler.HandleListSessions)
 			})
 
 			r.Patch("/users/{id}/", app.UserHandler.HandleUpdateUser)

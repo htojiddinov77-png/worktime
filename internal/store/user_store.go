@@ -73,25 +73,26 @@ func NewPostgresUserStore(db *sql.DB) *PostgresUserStore {
 }
 
 type UserStore interface {
-	CreateUser(*User) error
-	GetUserById(id int64) (*User, error)
-	GetUserByEmail(email string) (*User, error)
+	CreateUser(ctx context.Context, user *User) error
+	GetUserById(ctx context.Context,id int64) (*User, error)
+	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	GetAllUsers(ctx context.Context, input ListUserInput) ([]*User, *Metadata, error)
 	UpdatePasswordPlain(userId int64, newPassword string) error
-	UpdateUser(user *User) error
+	UpdateUser(ctx context.Context,user *User) error
 	LoginFail(ctx context.Context, email string) error
 	Lockout(ctx context.Context, email string) error
 	Unlock(ctx context.Context, email string) error
 }
 
-func (pg *PostgresUserStore) CreateUser(user *User) error {
+func (pg *PostgresUserStore) CreateUser(ctx context.Context, user *User) error {
 	query := `
 		INSERT INTO users (name, email, password_hash, is_active, created_at)
 		VALUES ($1, $2, $3, $4, NOW())
 		RETURNING id, role, created_at;
 	`
 
-	err := pg.db.QueryRow(
+	err := pg.db.QueryRowContext(
+		ctx,
 		query,
 		user.Name,
 		user.Email,
@@ -105,7 +106,7 @@ func (pg *PostgresUserStore) CreateUser(user *User) error {
 	return nil
 }
 
-func (pg *PostgresUserStore) GetUserById(id int64) (*User, error) {
+func (pg *PostgresUserStore) GetUserById(ctx context.Context,id int64) (*User, error) {
 	user := &User{}
 
 	query := `
@@ -115,7 +116,7 @@ func (pg *PostgresUserStore) GetUserById(id int64) (*User, error) {
 	`
 
 	var pwHash string
-	err := pg.db.QueryRow(query, id).Scan(
+	err := pg.db.QueryRowContext(ctx,query, id).Scan(
 		&user.Id,
 		&user.Name,
 		&user.Email,
@@ -136,7 +137,7 @@ func (pg *PostgresUserStore) GetUserById(id int64) (*User, error) {
 	return user, nil
 }
 
-func (pg *PostgresUserStore) GetUserByEmail(email string) (*User, error) {
+func (pg *PostgresUserStore) GetUserByEmail(ctx context.Context,email string) (*User, error) {
 	user := &User{}
 
 	query := `
@@ -145,7 +146,7 @@ func (pg *PostgresUserStore) GetUserByEmail(email string) (*User, error) {
 		WHERE email = $1
 	`
 
-	err := pg.db.QueryRow(query, email).Scan(
+	err := pg.db.QueryRowContext(ctx, query, email).Scan(
 		&user.Id,
 		&user.Name,
 		&user.Email,
@@ -164,7 +165,7 @@ func (pg *PostgresUserStore) GetUserByEmail(email string) (*User, error) {
 	return user, nil
 }
 
-func (pg *PostgresUserStore) UpdateUser(user *User) error {
+func (pg *PostgresUserStore) UpdateUser(ctx context.Context,user *User) error {
 	query := `
 		UPDATE users
 		SET
@@ -177,7 +178,7 @@ func (pg *PostgresUserStore) UpdateUser(user *User) error {
 		WHERE id = $6
 	`
 
-	_, err := pg.db.Exec(query,
+	_, err := pg.db.ExecContext(ctx,query,
 		user.Name,
 		user.Email,
 		user.PasswordHash.hash,
@@ -188,7 +189,6 @@ func (pg *PostgresUserStore) UpdateUser(user *User) error {
 	return err
 }
 
-
 func (pg *PostgresUserStore) GetAllUsers(ctx context.Context, input ListUserInput) ([]*User, *Metadata, error) {
 	result := []*User{}
 	metadata := Metadata{}
@@ -198,18 +198,18 @@ func (pg *PostgresUserStore) GetAllUsers(ctx context.Context, input ListUserInpu
 	SELECT COUNT(*) OVER(), id, email, name, role, is_active, is_locked, last_failed_login, failed_attempts, created_at
 	FROM users
 	WHERE (
-	$1 = '' OR
-	email ILIKE $1 || '%%' OR
-	name ILIKE $1 || '%%' 
+		$1 = '' OR
+		email ILIKE $1 || '%%' OR
+		name  ILIKE $1 || '%%'
 	)
-	AND ($2 IS False OR is_active = $2)
-	AND ($3 IS False OR is_locked = $3)
+	AND ($2::boolean IS NULL OR is_active = $2::boolean)
+	AND ($3::boolean IS NULL OR is_locked = $3::boolean)
 	AND ($4 = '' OR role = $4)
 	ORDER BY %s, id ASC
 	LIMIT $5 OFFSET $6`, input.Sort)
 
-	rows, err := pg.db.QueryContext(
-		ctx, query,
+
+	rows, err := pg.db.QueryContext(ctx, query,
 		input.Search,
 		input.IsActive,
 		input.IsLocked,
@@ -248,7 +248,7 @@ func (pg *PostgresUserStore) GetAllUsers(ctx context.Context, input ListUserInpu
 		result = append(result, user)
 	}
 
-	metadata = CalculateMetadata(totalRecords, int(input.Page), int(input.PageSize))
+	metadata = CalculateMetadata(totalRecords, int(input.Filter.Page), int(input.Filter.PageSize))
 
 	return result, &metadata, nil
 }

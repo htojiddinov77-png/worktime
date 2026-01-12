@@ -15,7 +15,7 @@ import (
 var ErrInvalidToken = errors.New("invalid token")
 
 type UserClaims struct {
-	Id     int64  `json:"id"`
+	Id     int64  `json:"user_id"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
 	Expiry int64  `json:"exp"`

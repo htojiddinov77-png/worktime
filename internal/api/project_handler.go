@@ -60,7 +60,7 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	user, err := ph.userStore.GetUserById(u.Id)
+	user, err := ph.userStore.GetUserById(r.Context(),u.Id)
 	if err != nil {
 		ph.logger.Println("error while getting user by id:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})

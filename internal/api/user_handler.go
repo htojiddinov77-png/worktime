@@ -51,7 +51,7 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existingUser, err := uh.userStore.GetUserByEmail(req.Email)
+	existingUser, err := uh.userStore.GetUserByEmail(r.Context(),req.Email)
 	if err != nil {
 		uh.logger.Println("Error while getting user:")
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
@@ -76,7 +76,7 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = uh.userStore.CreateUser(user)
+	err = uh.userStore.CreateUser(r.Context(), user)
 	if err != nil {
 		uh.logger.Println("Error: while creating user")
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
@@ -116,7 +116,7 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 	}
 
 
-	existingUser, err := uh.userStore.GetUserById(targetUserId)
+	existingUser, err := uh.userStore.GetUserById(r.Context(),targetUserId)
 	if err != nil {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
@@ -177,7 +177,7 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		userByEmail, err := uh.userStore.GetUserByEmail(email)
+		userByEmail, err := uh.userStore.GetUserByEmail(r.Context(),email)
 		if err != nil {
 			uh.logger.Println("Error getting user by email:", err)
 			utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
@@ -205,7 +205,7 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 10) save
-	if err := uh.userStore.UpdateUser(existingUser); err != nil {
+	if err := uh.userStore.UpdateUser(r.Context(), existingUser); err != nil {
 		uh.logger.Println("Error updating user:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
@@ -290,7 +290,7 @@ func (uh *UserHandler) HandleGenerateResetToken(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	user, err := uh.userStore.GetUserByEmail(input.Email)
+	user, err := uh.userStore.GetUserByEmail(r.Context(),input.Email)
 	if err != nil {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
@@ -360,7 +360,7 @@ func (uh *UserHandler) HandleResetPassword(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	user, err := uh.userStore.GetUserById(claims.UserID)
+	user, err := uh.userStore.GetUserById(r.Context(),claims.UserID)
 	if err != nil {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return

@@ -46,7 +46,7 @@ func (th *TokenHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existingUser, err := th.UserStore.GetUserByEmail(req.Email)
+	existingUser, err := th.UserStore.GetUserByEmail(r.Context(),req.Email)
 	if err != nil {
 		th.Logger.Println("GetUserByEmail error:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})

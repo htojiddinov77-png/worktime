@@ -211,7 +211,7 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 	meta := store.CalculateMetadata(total, filter.Page, filter.PageSize)
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
-		"sessions": rows,
+		"result": rows,
 		"metadata": meta,
 	})
 }

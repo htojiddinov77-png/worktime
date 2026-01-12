@@ -23,8 +23,8 @@ type ProjectRow struct {
 
 
 type Project struct {
-	Id       int64  `json:"id"`
-	Name     string `json:"name"`
+	ProjectId       int64  `json:"project_id"`
+	ProjectName     string `json:"project_name"`
 	StatusId int64  `json:"status_id"`
 }
 
@@ -39,7 +39,7 @@ func (pg PostgresProjectStore) CreateProject(project *Project) error {
 	VALUES($1, $2)
 	RETURNING id`
 
-	err := pg.db.QueryRow(query, project.Name, project.StatusId).Scan(&project.Id)
+	err := pg.db.QueryRow(query, project.ProjectName, project.StatusId).Scan(&project.ProjectId)
 	if err != nil {
 		return err
 	}

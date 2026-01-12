@@ -26,11 +26,26 @@ type WorkSession struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
+type UserResponse struct {
+	UserId   int64  `json:"user_id"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	IsActive bool   `json:"is_active"`
+}
+
+type WorkSessionResponse struct {
+	Id        int64      `json:"id"`
+	StartAt   time.Time  `json:"start_at"`
+	EndAt     *time.Time `json:"end_at"`
+	Note      string     `json:"note"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
 type WorkSessionRow struct {
-	WorkSession
-	ProjectName   string `json:"project_name"`
-	UserName      string `json:"user_name"`
-	UserEmail     string `json:"user_email"`
+	User UserResponse `json:"user"`
+	Project	ProjectRow `json:"project"`
+	Session WorkSessionResponse `json:"sessions"`
+
 	DerivedStatus string `json:"status"` // "active" if end_at IS NULL else "inactive"
 }
 
@@ -78,7 +93,7 @@ type SummaryReport struct {
 	To      string         `json:"to"`
 	Filters SummaryFilters `json:"filters"`
 
-	User *ReportUser `json:"user,omitempty"`
+	User      *ReportUser      `json:"user,omitempty"`
 	Overall   OverallSummary   `json:"overall"`
 	ByProject []ProjectSummary `json:"by_project"`
 }
@@ -99,8 +114,12 @@ func (pg *PostgresWorkSessionStore) StartSession(ctx context.Context, ws *WorkSe
 		RETURNING id, start_at, created_at;
 	`
 
-	return pg.db.QueryRowContext(ctx, query, ws.UserId, ws.ProjectId, ws.Note).
+	err := pg.db.QueryRowContext(ctx, query, ws.UserId, ws.ProjectId, ws.Note).
 		Scan(&ws.Id, &ws.StartAt, &ws.CreatedAt)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (pg *PostgresWorkSessionStore) StopSession(ctx context.Context, sessionID int64, userID int64) error {
@@ -131,7 +150,6 @@ func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter Wor
 	limit := filter.Limit()
 	offset := filter.Offset()
 
-	
 	userID := int64(0)
 	if filter.UserID != nil {
 		userID = *filter.UserID
@@ -142,12 +160,10 @@ func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter Wor
 		projectID = *filter.ProjectID
 	}
 
-	
 	search := ""
 	if filter.Search != nil {
 		search = strings.TrimSpace(*filter.Search)
 	}
-
 
 	active := ""
 	if filter.Active != nil {
@@ -159,37 +175,51 @@ func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter Wor
 	}
 
 	query := `
-		SELECT
-			COUNT(*) OVER() AS total_records,
-			ws.id, ws.user_id, ws.project_id, ws.start_at, ws.end_at,
-			COALESCE(ws.note, '') AS note,
-			ws.created_at,
-			p.name AS project_name,
-			u.name AS user_name,
-			u.email AS user_email,
-			CASE WHEN ws.end_at IS NULL THEN 'active' ELSE 'inactive' END AS status
-		FROM work_sessions ws
-		JOIN projects p ON p.id = ws.project_id
-		JOIN users u ON u.id = ws.user_id
-		WHERE
-			($1 = 0 OR ws.user_id = $1)
-			AND ($2 = 0 OR ws.project_id = $2)
-			AND (
-				$3 = '' OR (
-					p.name ILIKE $3 || '%%' OR
-					u.name ILIKE $3 || '%%' OR
-					u.email ILIKE $3 || '%%' OR
-					COALESCE(ws.note,'') ILIKE $3 || '%%'
-				)
+	SELECT
+		COUNT(*) OVER() AS total_records,
+		ws.id AS session_id,                    
+
+		u.id      AS user_id,
+		u.name    AS user_name,
+		u.email   AS user_email,
+		u.is_active AS user_is_active,
+
+		p.id      AS project_id,
+		p.name    AS project_name,
+		COALESCE(s.id, 0)    AS project_status_id,
+		COALESCE(s.name, '') AS project_status_name,
+
+
+		ws.start_at,
+		ws.end_at,
+		COALESCE(ws.note, '') AS note,
+		ws.created_at,
+
+		CASE WHEN ws.end_at IS NULL THEN 'active' ELSE 'inactive' END AS status
+	FROM work_sessions ws
+	JOIN projects p ON p.id = ws.project_id
+	JOIN users u ON u.id = ws.user_id
+	LEFT JOIN statuses s ON s.id = p.status_id
+	WHERE
+		($1 = 0 OR ws.user_id = $1)
+		AND ($2 = 0 OR ws.project_id = $2)
+		AND (
+			$3 = '' OR (
+				p.name ILIKE $3 || '%%' OR
+				u.name ILIKE $3 || '%%' OR
+				u.email ILIKE $3 || '%%' OR
+				COALESCE(ws.note,'') ILIKE $3 || '%%'
 			)
-			AND (
-				$4 = '' OR
-				($4 = 'true'  AND ws.end_at IS NULL) OR
-				($4 = 'false' AND ws.end_at IS NOT NULL)
-			)
-		ORDER BY ws.start_at DESC, ws.id DESC
-		LIMIT $5 OFFSET $6;
-	`
+		)
+		AND (
+			$4 = '' OR
+			($4 = 'true'  AND ws.end_at IS NULL) OR
+			($4 = 'false' AND ws.end_at IS NOT NULL)
+		)
+	ORDER BY ws.start_at DESC, ws.id DESC
+	LIMIT $5 OFFSET $6;
+`
+
 
 	rows, err := pg.db.QueryContext(
 		ctx,
@@ -217,20 +247,28 @@ func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter Wor
 
 		if err := rows.Scan(
 			&totalRecords,
-			&row.Id,
-			&row.UserId,
-			&row.ProjectId,
-			&row.StartAt,
-			&row.EndAt,
-			&row.Note,
-			&row.CreatedAt,
-			&row.ProjectName,
-			&row.UserName,
-			&row.UserEmail,
+			&row.Session.Id,         
+		
+			&row.User.UserId,
+			&row.User.Name,
+			&row.User.Email,
+			&row.User.IsActive,
+		
+			&row.Project.Id,
+			&row.Project.Name,
+			&row.Project.Status.Id,
+			&row.Project.Status.Name,
+		
+			&row.Session.StartAt,
+			&row.Session.EndAt,
+			&row.Session.Note,
+			&row.Session.CreatedAt,
+		
 			&row.DerivedStatus,
 		); err != nil {
-			return nil, 0, err
+			return nil, 0, err 
 		}
+		
 
 		total = totalRecords
 		out = append(out, row)

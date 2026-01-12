@@ -78,7 +78,7 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 	
 
 	pj := &store.Project{
-		Name:     req.Name,
+		ProjectName:     req.Name,
 	}
 
 	if err := ph.projectStore.CreateProject(pj); err != nil {

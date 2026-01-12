@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"context"
-	"fmt"
+	
 	"net/http"
 
 	"github.com/htojiddinov77-png/worktime/internal/auth"
@@ -34,8 +34,8 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Vary", "Authorization")
 		authHeader := r.Header.Get("Authorization")
-		fmt.Println("[AUTH] path:", r.Method, r.URL.Path)
-		 fmt.Println("[AUTH] Authorization header:", authHeader)
+		
+
 
 		if authHeader == "" {
 			r = SetUser(r, auth.AnonymousUser)

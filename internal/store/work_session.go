@@ -46,7 +46,7 @@ type WorkSessionRow struct {
 	Project ProjectRow          `json:"project"`
 	Session WorkSessionResponse `json:"sessions"`
 
-	DerivedStatus string `json:"status"` // "active" if end_at IS NULL else "inactive"
+	DerivedStatus string `json:"status"` 
 }
 
 type WorkSessionFilter struct {
@@ -63,6 +63,7 @@ type SummaryRangeFilter struct {
 	ProjectID *int64
 	FromDate  time.Time // date (YYYY-MM-DD) parsed -> any time ok
 	ToDate    time.Time // date (YYYY-MM-DD)
+
 }
 
 type ReportUser struct {
@@ -72,15 +73,19 @@ type ReportUser struct {
 }
 
 type OverallSummary struct {
-	TotalSessions int `json:"total_sessions"`
-	TotalMinutes  int `json:"total_minutes"`
+	TotalSessions  int    `json:"total_sessions"`
+	TotalDurations string `json:"total_durations"`
 }
 
 type ProjectSummary struct {
-	ProjectID     int64  `json:"project_id"`
-	ProjectName   string `json:"project_name"`
-	TotalSessions int    `json:"total_sessions"`
-	TotalMinutes  int    `json:"total_minutes"`
+	ProjectID   int64  `json:"project_id"`
+	ProjectName string `json:"project_name"`
+	Status      string `json:"status"`
+
+	TotalSessions  int    `json:"total_sessions"`
+	TotalDurations string `json:"total_durations"`
+
+	Users []UserSummary `json:"users,omitempty"`
 }
 
 type SummaryFilters struct {
@@ -89,13 +94,26 @@ type SummaryFilters struct {
 }
 
 type SummaryReport struct {
-	From    string         `json:"from"`
-	To      string         `json:"to"`
-	Filters SummaryFilters `json:"filters"`
+	From string `json:"from"`
+	To   string `json:"to"`
 
-	User      *ReportUser      `json:"user,omitempty"`
-	Overall   OverallSummary   `json:"overall"`
-	ByProject []ProjectSummary `json:"by_project"`
+	Filters SummaryFilters `json:"filters"`
+	Overall OverallSummary `json:"overall"`
+
+	Users    []UserSummary    `json:"users,omitempty"`
+	Projects []ProjectSummary `json:"projects,omitempty"`
+}
+
+type UserSummary struct {
+	UserID    int64  `json:"user_id"`
+	UserName  string `json:"user_name"`
+	UserEmail string `json:"user_email"`
+	IsActive  bool   `json:"is_active"`
+
+	TotalSessions  int    `json:"total_sessions"`
+	TotalDurations string `json:"total_durations"`
+
+	Projects []ProjectSummary `json:"projects,omitempty"`
 }
 
 type WorkSessionStore interface {
@@ -103,7 +121,6 @@ type WorkSessionStore interface {
 	StopSession(ctx context.Context, sessionID int64, userID int64) error
 	GetSummaryReport(ctx context.Context, filter SummaryRangeFilter) (*SummaryReport, error)
 
-	// book-style: return total records too (for pagination metadata)
 	ListSessions(ctx context.Context, filter WorkSessionFilter) ([]WorkSessionRow, int, error)
 }
 
@@ -150,7 +167,7 @@ func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter Wor
 	limit := filter.Limit()
 	offset := filter.Offset()
 
-	userID := int64(0)
+	userID := int64(0) // filter ishlatilmaganda
 	if filter.UserID != nil {
 		userID = *filter.UserID
 	}
@@ -275,120 +292,174 @@ func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter Wor
 	return out, total, rows.Err()
 }
 
-
 func (pg *PostgresWorkSessionStore) GetSummaryReport(ctx context.Context, filter SummaryRangeFilter) (*SummaryReport, error) {
 	// Normalize dates to [fromStart, toEnd) in UTC
 	fromStart := time.Date(filter.FromDate.Year(), filter.FromDate.Month(), filter.FromDate.Day(), 0, 0, 0, 0, time.UTC)
 	toStart := time.Date(filter.ToDate.Year(), filter.ToDate.Month(), filter.ToDate.Day(), 0, 0, 0, 0, time.UTC)
 	toEnd := toStart.Add(24 * time.Hour)
 
-	if !toEnd.After(fromStart) {
-		return nil, fmt.Errorf("invalid date range: to must be >= from")
-	}
-
-	rep := &SummaryReport{
-		From: fromStart.Format("2006-01-02"),
-		To:   toStart.Format("2006-01-02"),
+	report := &SummaryReport{
+		From: fromStart.Format(time.DateOnly),
+		To:   toStart.Format(time.DateOnly),
 		Filters: SummaryFilters{
 			UserID:    filter.UserID,
 			ProjectID: filter.ProjectID,
 		},
-		ByProject: []ProjectSummary{},
 	}
 
-	// Optional user info for single-user report
-	if filter.UserID != nil {
-		var u ReportUser
-		err := pg.db.QueryRow(`
-			SELECT id, name, email
-			FROM users
-			WHERE id = $1
-		`, *filter.UserID).Scan(&u.UserID, &u.UserName, &u.UserEmail)
-		if err != nil {
-			return nil, err
-		}
-		rep.User = &u
-	}
-
-	// Overall summary
-	overallSQL := `
-		SELECT
-			COUNT(*) AS total_sessions,
-			COALESCE(SUM(
-				GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ws.end_at, NOW()) - ws.start_at)) / 60)
-			), 0)::int AS total_minutes
-		FROM work_sessions ws
-		WHERE ws.start_at >= $1 AND ws.start_at < $2
-	`
-
-	args := []any{fromStart, toEnd}
-	pos := 3 // third value
+	whereClause := "WHERE ws.start_at >= $1 AND ws.start_at < $2"
+	args := []interface{}{fromStart, toEnd}
+	argCount := 2
 
 	if filter.UserID != nil {
-		overallSQL += fmt.Sprintf(" AND ws.user_id = $%d", pos)
+		argCount++
+		whereClause += fmt.Sprintf(" AND ws.user_id = $%d", argCount)
 		args = append(args, *filter.UserID)
-		pos++
-	}
-	if filter.ProjectID != nil {
-		overallSQL += fmt.Sprintf(" AND ws.project_id = $%d", pos)
-		args = append(args, *filter.ProjectID)
-		pos++
 	}
 
-	if err := pg.db.QueryRow(overallSQL, args...).Scan(&rep.Overall.TotalSessions, &rep.Overall.TotalMinutes); err != nil {
+	if filter.ProjectID != nil {
+		argCount++
+		whereClause += fmt.Sprintf(" AND ws.project_id = $%d", argCount)
+		args = append(args, *filter.ProjectID)
+	}
+
+	overallQuery := fmt.Sprintf(`
+		SELECT 
+			COUNT(*) as total_sessions,
+			COALESCE(SUM(EXTRACT(EPOCH FROM (ws.end_at - ws.start_at))), 0) as total_seconds
+		FROM work_sessions ws
+		%s AND ws.end_at IS NOT NULL
+	`, whereClause)
+
+	var totalSessions int
+	var totalSeconds float64
+
+	if err := pg.db.QueryRowContext(ctx, overallQuery, args...).Scan(&totalSessions, &totalSeconds); err != nil {
 		return nil, err
 	}
 
-	// By-project summary
-	byProjectSQL := `
-		SELECT
-			p.id AS project_id,
-			p.name AS project_name,
-			COUNT(*) AS total_sessions,
-			COALESCE(SUM(
-				GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ws.end_at, NOW()) - ws.start_at)) / 60)
-			), 0)::int AS total_minutes
-		FROM work_sessions ws
-		JOIN projects p ON p.id = ws.project_id
-		WHERE ws.start_at >= $1 AND ws.start_at < $2
-	`
-
-	args2 := []any{fromStart, toEnd}
-	pos2 := 3
-
-	if filter.UserID != nil {
-		byProjectSQL += fmt.Sprintf(" AND ws.user_id = $%d", pos2)
-		args2 = append(args2, *filter.UserID)
-		pos2++
-	}
-	if filter.ProjectID != nil {
-		byProjectSQL += fmt.Sprintf(" AND ws.project_id = $%d", pos2)
-		args2 = append(args2, *filter.ProjectID)
-		pos2++
+	report.Overall = OverallSummary{
+		TotalSessions:  totalSessions,
+		TotalDurations: formatDuration(totalSeconds),
 	}
 
-	byProjectSQL += `
-		GROUP BY p.id, p.name
-		ORDER BY total_minutes DESC, p.id ASC
-	`
+	// ✅ Always user-first
+	users, err := pg.getUserSummaries(ctx, whereClause, args)
+	if err != nil {
+		return nil, err
+	}
+	report.Users = users
 
-	rows, err := pg.db.Query(byProjectSQL, args2...)
+	return report, nil
+}
+
+func (pg *PostgresWorkSessionStore) getUserSummaries(ctx context.Context, whereClause string, args []interface{}) ([]UserSummary, error) {
+	query := fmt.Sprintf(`
+		SELECT 
+			u.id,
+			u.name,
+			u.email,
+			u.is_active,
+			COUNT(ws.id) as total_sessions,
+			COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(ws.end_at, NOW()) - ws.start_at))), 0) as total_seconds
+		FROM 
+			users u
+		INNER JOIN 
+			work_sessions ws 
+		ON 
+			ws.user_id = u.id
+			%s AND ws.end_at IS NOT NULL
+		GROUP BY 
+			u.id, u.name, u.email, u.is_active
+		ORDER BY 
+			u.id
+	`, whereClause)
+
+	rows, err := pg.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
+	var users []UserSummary
 	for rows.Next() {
-		var ps ProjectSummary
-		if err := rows.Scan(&ps.ProjectID, &ps.ProjectName, &ps.TotalSessions, &ps.TotalMinutes); err != nil {
+		var user UserSummary
+		var totalSeconds float64
+
+		err := rows.Scan(&user.UserID, &user.UserName, &user.UserEmail, &user.IsActive, &user.TotalSessions, &totalSeconds)
+		if err != nil {
 			return nil, err
 		}
-		rep.ByProject = append(rep.ByProject, ps)
+		user.TotalDurations = formatDuration(totalSeconds)
+
+		projects, err := pg.getProjectsForUser(ctx, user.UserID, whereClause, args)
+		if err != nil {
+			return nil, err
+		}
+		user.Projects = projects
+
+		users = append(users, user)
 	}
 
-	if err := rows.Err(); err != nil {
+	return users, rows.Err()
+}
+
+func (pg *PostgresWorkSessionStore) getProjectsForUser(ctx context.Context, userID int64, whereClause string, args []interface{}) ([]ProjectSummary, error) {
+	query := fmt.Sprintf(`
+	SELECT 
+		p.id,
+		p.name,
+		COALESCE(s.name, '') AS status,
+		COUNT(ws.id) as total_sessions,
+		COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(ws.end_at, NOW()) - ws.start_at))), 0) as total_seconds
+	FROM projects p
+	LEFT JOIN statuses s ON s.id = p.status_id
+	INNER JOIN work_sessions ws ON ws.project_id = p.id
+	%s
+		AND ws.user_id = $%d
+		AND ws.end_at IS NOT NULL
+	GROUP BY p.id, p.name, s.name
+	ORDER BY p.id
+`, whereClause, len(args)+1)
+
+	newArgs := append(args, userID)
+	rows, err := pg.db.QueryContext(ctx, query, newArgs...)
+	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
-	return rep, nil
+	var projects []ProjectSummary
+	for rows.Next() {
+		var project ProjectSummary
+		var totalSeconds float64
+
+		err := rows.Scan(
+			&project.ProjectID,
+			&project.ProjectName,
+			&project.Status, // ✅ now filled
+			&project.TotalSessions,
+			&totalSeconds,
+		)
+
+		if err != nil {
+			return nil, err
+		}
+
+		project.TotalDurations = formatDuration(totalSeconds)
+		projects = append(projects, project)
+	}
+
+	return projects, rows.Err()
+}
+
+
+func formatDuration(seconds float64) string {
+	totalSeconds := int64(seconds)
+	days := totalSeconds / 86400
+	hours := (totalSeconds % 86400) / 3600
+	minutes := (totalSeconds % 3600) / 60
+	secs := totalSeconds % 60
+
+	return fmt.Sprintf("%d days, %02d:%02d:%02d", days, hours, minutes, secs)
 }

@@ -34,8 +34,6 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Vary", "Authorization")
 		authHeader := r.Header.Get("Authorization")
-		
-
 
 		if authHeader == "" {
 			r = SetUser(r, auth.AnonymousUser)

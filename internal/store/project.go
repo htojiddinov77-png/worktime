@@ -1,6 +1,9 @@
 package store
 
-import "database/sql"
+import (
+	"context"
+	"database/sql"
+)
 
 type PostgresProjectStore struct {
 	db *sql.DB
@@ -31,6 +34,8 @@ type Project struct {
 type ProjectStore interface {
 	CreateProject(*Project) error
 	ListProjects() ([]ProjectRow, error)
+	UpdateProject(ctx context.Context, id int64) error
+	DeleteProject(ctx context.Context, id int64) error
 }
 
 func (pg PostgresProjectStore) CreateProject(project *Project) error {
@@ -86,4 +91,30 @@ func (pg *PostgresProjectStore) ListProjects() ([]ProjectRow, error) {
 	}
 
 	return out, nil
+}
+
+func (pg *PostgresProjectStore) UpdateProject(ctx context.Context, id int64) error {
+	project := &Project{}
+	query := `UPDATE projects
+	SET name = $1, status_id = $2
+	WHERE id = $3`
+
+	_,err := pg.db.ExecContext(ctx, query,project.ProjectName, project.StatusId, id)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (pg *PostgresProjectStore) DeleteProject(ctx context.Context, id int64) error {
+	query := `DELETE FROM projects
+	WHERE id = $1`
+
+	_, err := pg.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

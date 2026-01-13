@@ -42,8 +42,8 @@ type WorkSessionResponse struct {
 }
 
 type WorkSessionRow struct {
-	User UserResponse `json:"user"`
-	Project	ProjectRow `json:"project"`
+	User    UserResponse        `json:"user"`
+	Project ProjectRow          `json:"project"`
 	Session WorkSessionResponse `json:"sessions"`
 
 	DerivedStatus string `json:"status"` // "active" if end_at IS NULL else "inactive"
@@ -220,7 +220,6 @@ func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter Wor
 	LIMIT $5 OFFSET $6;
 `
 
-
 	rows, err := pg.db.QueryContext(
 		ctx,
 		query,
@@ -247,28 +246,27 @@ func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter Wor
 
 		if err := rows.Scan(
 			&totalRecords,
-			&row.Session.Id,         
-		
+			&row.Session.Id,
+
 			&row.User.UserId,
 			&row.User.Name,
 			&row.User.Email,
 			&row.User.IsActive,
-		
+
 			&row.Project.Id,
 			&row.Project.Name,
 			&row.Project.Status.Id,
 			&row.Project.Status.Name,
-		
+
 			&row.Session.StartAt,
 			&row.Session.EndAt,
 			&row.Session.Note,
 			&row.Session.CreatedAt,
-		
+
 			&row.DerivedStatus,
 		); err != nil {
-			return nil, 0, err 
+			return nil, 0, err
 		}
-		
 
 		total = totalRecords
 		out = append(out, row)
@@ -276,6 +274,7 @@ func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter Wor
 
 	return out, total, rows.Err()
 }
+
 
 func (pg *PostgresWorkSessionStore) GetSummaryReport(ctx context.Context, filter SummaryRangeFilter) (*SummaryReport, error) {
 	// Normalize dates to [fromStart, toEnd) in UTC

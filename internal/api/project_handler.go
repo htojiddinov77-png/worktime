@@ -111,4 +111,50 @@ func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+func(ph *ProjectHandler) HandleUpdateProject(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	if user == nil || user.Role != "admin" {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error":"unauthorized"})
+		return
+	}
+
+	projectId, err := utils.ReadIdParam(r)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid id"})
+		return
+	}
+
+	err = ph.projectStore.UpdateProject(r.Context(), projectId)
+	if err != nil {
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "project updated succesfully"})
+}
+
+func (ph *ProjectHandler) HandleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	if user == nil || user.Role != "admin" {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unaunthorized"})
+		return
+	}
+
+	projectId, err := utils.ReadIdParam(r)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid id"})
+		return
+	}
+	
+	err = ph.projectStore.DeleteProject(r.Context(),projectId)
+	if err != nil {
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{"error": "project deleted successfully"})
+}
+
+
+
 

@@ -46,7 +46,7 @@ type WorkSessionRow struct {
 	Project ProjectRow          `json:"project"`
 	Session WorkSessionResponse `json:"sessions"`
 
-	DerivedStatus string `json:"status"` 
+	DerivedStatus string `json:"status"`
 }
 
 type WorkSessionFilter struct {
@@ -294,6 +294,7 @@ func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter Wor
 func (pg *PostgresWorkSessionStore) GetSummaryReport(ctx context.Context, filter SummaryRangeFilter) (*SummaryReport, error) {
 	// Normalize dates to [fromStart, toEnd) in UTC
 	fromStart := time.Date(filter.FromDate.Year(), filter.FromDate.Month(), filter.FromDate.Day(), 0, 0, 0, 0, time.UTC)
+
 	toStart := time.Date(filter.ToDate.Year(), filter.ToDate.Month(), filter.ToDate.Day(), 0, 0, 0, 0, time.UTC)
 	toEnd := toStart.Add(24 * time.Hour)
 
@@ -306,6 +307,7 @@ func (pg *PostgresWorkSessionStore) GetSummaryReport(ctx context.Context, filter
 		},
 	}
 
+	// Base WHERE clause
 	whereClause := "WHERE ws.start_at >= $1 AND ws.start_at < $2"
 	args := []interface{}{fromStart, toEnd}
 	argCount := 2
@@ -324,16 +326,21 @@ func (pg *PostgresWorkSessionStore) GetSummaryReport(ctx context.Context, filter
 
 	overallQuery := fmt.Sprintf(`
 		SELECT 
-			COUNT(*) as total_sessions,
-			COALESCE(SUM(EXTRACT(EPOCH FROM (ws.end_at - ws.start_at))), 0) as total_seconds
+			COUNT(*) AS total_sessions,
+			COALESCE(
+				SUM(EXTRACT(EPOCH FROM (COALESCE(ws.end_at, NOW()) - ws.start_at))),
+				0
+			) AS total_seconds
 		FROM work_sessions ws
-		%s AND ws.end_at IS NOT NULL
+		%s
 	`, whereClause)
 
 	var totalSessions int
 	var totalSeconds float64
 
-	if err := pg.db.QueryRowContext(ctx, overallQuery, args...).Scan(&totalSessions, &totalSeconds); err != nil {
+	if err := pg.db.
+		QueryRowContext(ctx, overallQuery, args...).
+		Scan(&totalSessions, &totalSeconds); err != nil {
 		return nil, err
 	}
 
@@ -342,16 +349,14 @@ func (pg *PostgresWorkSessionStore) GetSummaryReport(ctx context.Context, filter
 		TotalDurations: formatDuration(totalSeconds),
 	}
 
-	
 	users, err := pg.getUserSummaries(ctx, whereClause, args)
 	if err != nil {
 		return nil, err
 	}
-	report.Users = users
 
+	report.Users = users
 	return report, nil
 }
-
 
 // aggregates sessions per user
 func (pg *PostgresWorkSessionStore) getUserSummaries(ctx context.Context, whereClause string, args []interface{}) ([]UserSummary, error) {
@@ -361,19 +366,16 @@ func (pg *PostgresWorkSessionStore) getUserSummaries(ctx context.Context, whereC
 			u.name,
 			u.email,
 			u.is_active,
-			COUNT(ws.id) as total_sessions,
-			COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(ws.end_at, NOW()) - ws.start_at))), 0) as total_seconds
-		FROM 
-			users u
-		INNER JOIN 
-			work_sessions ws 
-		ON 
-			ws.user_id = u.id
-			%s AND ws.end_at IS NOT NULL
-		GROUP BY 
-			u.id, u.name, u.email, u.is_active
-		ORDER BY 
-			u.id
+			COUNT(ws.id) AS total_sessions,
+			COALESCE(
+				SUM(EXTRACT(EPOCH FROM (COALESCE(ws.end_at, NOW()) - ws.start_at))),
+				0
+			) AS total_seconds
+		FROM users u
+		INNER JOIN work_sessions ws ON ws.user_id = u.id
+		%s
+		GROUP BY u.id, u.name, u.email, u.is_active
+		ORDER BY u.id
 	`, whereClause)
 
 	rows, err := pg.db.QueryContext(ctx, query, args...)
@@ -383,27 +385,41 @@ func (pg *PostgresWorkSessionStore) getUserSummaries(ctx context.Context, whereC
 	defer rows.Close()
 
 	var users []UserSummary
+
 	for rows.Next() {
 		var user UserSummary
 		var totalSeconds float64
 
-		err := rows.Scan(&user.UserID, &user.UserName, &user.UserEmail, &user.IsActive, &user.TotalSessions, &totalSeconds)
-		if err != nil {
+		if err := rows.Scan(
+			&user.UserID,
+			&user.UserName,
+			&user.UserEmail,
+			&user.IsActive,
+			&user.TotalSessions,
+			&totalSeconds,
+		); err != nil {
 			return nil, err
 		}
+
 		user.TotalDurations = formatDuration(totalSeconds)
 
-		projects, err := pg.getProjectsForUser(ctx, user.UserID, whereClause, args)
+		projects, err := pg.getProjectsForUser(
+			ctx,
+			user.UserID,
+			whereClause,
+			args,
+		)
 		if err != nil {
 			return nil, err
 		}
-		user.Projects = projects
 
+		user.Projects = projects
 		users = append(users, user)
 	}
 
 	return users, rows.Err()
 }
+
 // aggregates sessions per project, but only for one user
 func (pg *PostgresWorkSessionStore) getProjectsForUser(ctx context.Context, userID int64, whereClause string, args []interface{}) ([]ProjectSummary, error) {
 	query := fmt.Sprintf(`
@@ -418,7 +434,6 @@ func (pg *PostgresWorkSessionStore) getProjectsForUser(ctx context.Context, user
 	INNER JOIN work_sessions ws ON ws.project_id = p.id
 	%s
 		AND ws.user_id = $%d
-		AND ws.end_at IS NOT NULL
 	GROUP BY p.id, p.name, s.name
 	ORDER BY p.id
 `, whereClause, len(args)+1)
@@ -438,7 +453,7 @@ func (pg *PostgresWorkSessionStore) getProjectsForUser(ctx context.Context, user
 		err := rows.Scan(
 			&project.ProjectID,
 			&project.ProjectName,
-			&project.Status, 
+			&project.Status,
 			&project.TotalSessions,
 			&totalSeconds,
 		)

@@ -34,10 +34,9 @@ type ProjectStore interface {
 	CreateProject(ctx context.Context, project *Project) error
 	ListProjects(ctx context.Context) ([]ProjectRow, error)
 	UpdateProject(ctx context.Context, id int64, name *string, statusID *int64) error
-	DeleteProject(ctx context.Context, id int64) error
 }
 
-func (pg PostgresProjectStore) CreateProject(ctx context.Context, project *Project) error {
+func (pg *PostgresProjectStore) CreateProject(ctx context.Context, project *Project) error {
 	query := `
 	INSERT into projects (name, status_id)
 	VALUES($1, $2)
@@ -117,14 +116,3 @@ func (pg *PostgresProjectStore) UpdateProject(ctx context.Context, id int64, nam
 	return nil
 }
 
-func (pg *PostgresProjectStore) DeleteProject(ctx context.Context, id int64) error {
-	query := `DELETE FROM projects
-	WHERE id = $1`
-
-	_, err := pg.db.ExecContext(ctx, query, id)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}

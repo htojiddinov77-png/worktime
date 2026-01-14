@@ -1,5 +1,471 @@
 # Worktime API Documentation
 
+This document is a precise API reference derived directly from the repository source code. It describes only behavior implemented in the codebase — no behavior is invented.
+
+Generated from code scan on: 2026-01-14
+
+---
+
+## 1. Overview
+
+- Purpose: Worktime is a REST backend for simple time tracking: user registration/login, starting/stopping work sessions tied to projects, admin management of users/projects, and summary reports over date ranges.
+- Base URL (mounted in router): `/v1` (health endpoint at root `/health`)
+- Tech stack: Go, chi router (`github.com/go-chi/chi/v5`), PostgreSQL (pgx driver), migrations via `goose`, JWT authentication (`github.com/golang-jwt/jwt/v5`).
+
+Configuration relevant env variables (from code):
+- `WORKTIME_DB_DSN` / `DATABASE_URL` — Postgres DSN (required in production)
+- `WORKTIME_JWT_SECRET` / `JWT_SECRET` — JWT HMAC secret (code contains a default fallback; replace in production)
+- `WORKTIME_PORT` / `SERVER_ADDRESS` — server listening port/address
+- Rate limiter envs: `LIMITER_RPS`, `LIMITER_BURST`, `LIMITER_ENABLED` (see Environment Differences)
+
+---
+
+## 2. Authentication & Security
+
+- Authentication type: JWT (HMAC-SHA256), bearer token in `Authorization` header.
+
+- Authorization header format:
+
+```
+Authorization: Bearer <access_token>
+```
+
+- Access token creation (code): `internal/auth.NewJWTManager().CreateToken(userID, email, role)` — token claims (map) include:
+
+  - `user_id` (integer)
+  - `email` (string)
+  - `role` (string) — code expects `user` or `admin`
+  - `exp` (unix timestamp) — expiry. CreateToken uses 24-hour TTL in code.
+
+- Verification: `JWTManager.VerifyToken` parses token into `UserClaims` with fields `Id (user_id)`, `Email`, `Role`, and `Expiry`. Middleware `Authenticate` extracts token with `ExtractBearerToken` and calls `VerifyToken`, placing `*auth.UserClaims` into request context.
+
+- Reset tokens: created by `CreateResetToken(userID, email, role, isActive, ttl)` and include `user_id`, `email`, `role`, `is_active`, and `exp` as MapClaims. The admin handler generates reset tokens with 10-minute TTL. `ParseResetToken` verifies and returns `ResetClaims` (contains `UserID`, `Email`, `Role`). Note: `is_active` is included when creating the token but `ResetClaims` struct does not expose `is_active` in parsing (see Limitations).
+
+- Role-based checks: handlers validate `role` string from claims in multiple places; expected roles are `admin` and `user`.
+
+- Account lockout behavior (implemented in code):
+  - On authentication failure, `UserStore.LoginFail` increments `failed_attempts` and updates `last_failed_login`.
+  - After a failed login, if `existingUser.FailedAttempts+1 > 4` the `UserStore.Lockout` method is called (sets `is_locked = true`, resets `failed_attempts`).
+  - On successful login, `UserStore.Unlock` is called.
+  - `TokenHandler.LoginHandler` will reject login when `existingUser.IsLocked` and `time.Since(existingUser.LastFailedLogin.Time) < 24h`.
+
+- Rate limiting: repository contains configuration for limiter (`internal/config.Config.Limiter`) with defaults (`LIMITER_RPS=2`, `LIMITER_BURST=4`, `LIMITER_ENABLED=true`), but there is no code applying a global rate limiter middleware. See Limitations.
+
+---
+
+## 3. Global API conventions
+
+- Response envelope: all handlers use `utils.Envelope` (alias for `map[string]interface{}`) and `utils.WriteJson` to write JSON responses. There is not a single enforced nested `data` shape — handlers use top-level keys such as `error`, `user`, `token`, `result`, `metadata`, `session`, `project`, `report`, etc.
+
+- Error format: `{ "error": "message" }` (most handlers follow this). HTTP status codes used by handlers include 200, 201, 400, 401, 403, 404, 409, 500.
+
+- Pagination / filtering conventions (store layer):
+  - Query params: `page` (int, default 1), `page_size` (int, default 50), `sort` (string). Several handlers supply a `SortSafeList` to validate `sort`.
+  - Filter validation: `Filter.Validate()` enforces `page` between 1 and 10_000_000 and `page_size` between 1 and 1000; `sort` must be one of safe-list fields (handlers set safe-list per endpoint).
+  - Metadata shape (returned by list endpoints):
+
+```json
+{ "current_page": 1, "page_size": 50, "first_page": 1, "last_page": 10, "total_records": 500 }
+```
+
+---
+
+## 4. Endpoints (derived from `internal/router/routes.go` and handlers)
+
+All endpoints shown exactly as mounted in code. Authentication requirement, allowed roles, query parameters, request body shapes, and example responses are included where they can be inferred from source.
+
+- Base route prefix: `/v1`
+
+### Health
+
+GET /health
+
+- Authentication: not required
+- Response: `200 OK` (empty response body in router)
+
+Example:
+
+```
+HTTP/1.1 200 OK
+```
+
+### Authentication
+
+#### Register
+
+POST /v1/auth/register/
+
+- Authentication: not required
+- Request body (JSON):
+
+```json
+{ "name": "string", "email": "user@example.com", "password": "string" }
+```
+
+- Validation (in code):
+  - `email` must match regex `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
+  - Email must not already exist (checked via `UserStore.GetUserByEmail`)
+
+- Success: `201 Created`, body: `{ "user": <User object> }` where `User` fields are from the store model (see Data Models).
+- Errors: `400` invalid payload or invalid email, `400` duplicate email (handler responds with message `Email is already exists`), `500` internal error.
+
+Example success:
+
+```json
+{ "user": { "id": 1, "name": "Alice", "email": "alice@example.com", "role": "user", "is_active": true, "created_at": "..." } }
+```
+
+#### Login
+
+POST /v1/auth/login/
+
+- Authentication: not required
+- Request body:
+
+```json
+{ "email": "user@example.com", "password": "string" }
+```
+
+- Behavior (code):
+  - Verifies user exists and `IsActive == true`.
+  - If `IsLocked` and `time.Since(last_failed_login) < 24h`, login is rejected.
+  - On password mismatch: `UserStore.LoginFail` increments failure counter; if `FailedAttempts+1 > 4` then `UserStore.Lockout` is invoked.
+  - On success: `UserStore.Unlock` is called and `JWTManager.CreateToken` issues an access token (24h TTL).
+
+- Success: `200 OK` with envelope `{ "token": "<jwt>", "name": "User Name", "role": "user" }`
+- Errors: `400` malformed input, `401` unauthorized for bad credentials/locked/inactive, `500` internal.
+
+Example success:
+
+```json
+{ "token": "<jwt>", "name": "Alice", "role": "user" }
+```
+
+#### Reset password (public endpoint — token in body)
+
+POST /v1/auth/reset-password/
+
+- Authentication: not required (token provided in request body)
+- Request body:
+
+```json
+{ "token": "<reset-token>", "new_password": "string", "confirm_password": "string" }
+```
+
+- Behavior: `UserHandler.HandleResetPassword` parses the reset token using `JWTManager.ParseResetToken` and verifies the `UserID` and `Email` from claims match a DB user; then updates password hash and persists via `UpdatePasswordPlain`.
+
+- Success: `200 OK` `{ "message": "password updated" }`
+- Errors: `400` invalid/expired token or password mismatch, `500` internal.
+
+### Authenticated group (middleware.Authenticate applied)
+
+The following endpoints are under the group which uses `app.Middleware.Authenticate` (this sets `auth.UserClaims` in request context). Most handlers call `middleware.GetUser(r)` to read the user.
+
+#### Statuses
+
+GET /v1/statuses
+
+- Authentication: required (middleware run). Handler enforces `user.Role == "admin"` — only admins are allowed.
+- Success: `200 OK` `{ "statuses": [ { "id": int, "name": string }, ... ] }`
+
+#### Projects
+
+GET /v1/projects
+
+- Authentication: required
+- Success: `200 OK` `{ "count": int, "projects": [ ProjectRow ] }`
+
+POST /v1/projects/
+
+- Authentication: required
+- Roles allowed: admin only (handler verifies `user.Role == "admin"`)
+- Request body:
+
+```json
+{ "name": "Project name", "status_id": 1 }
+```
+
+- Validation: `name` must be non-empty; `status_id` must be > 0. Handler checks logged-in user exists and is admin.
+- Success: `201 Created` with envelope `{ "message": "project created successfully", "project": <Project> }` — the code populates `store.Project{ProjectName: name, StatusId: status_id}` then calls `projectStore.CreateProject`.
+- Errors: `400` validation errors, `401/403` unauthorized/forbidden, `500` internal.
+
+PATCH /v1/project/{id}/
+
+- Authentication: required
+- Roles allowed: admin only (handler requires admin role via `middleware.GetUser`)
+- Path param: `{id}` numeric — `utils.ReadIdParam` parses/validates
+- Request body (partial update):
+
+```json
+{ "name": "string (optional)", "status_id": int (optional) }
+```
+
+- Validation: at least one of `name` or `status_id` must be present; `name` trimmed non-empty if provided; `status_id` must be positive if provided.
+- Success: `200 OK` `{ "message": "project updated successfully" }` on success; `400`/`401`/`403`/`404`/`500` as appropriate.
+
+Notes / Edge cases: see Limitations section for a code-level caveat affecting create/update semantics.
+
+#### Work sessions
+
+Start session
+
+POST /v1/work-sessions/start/
+
+- Authentication: required
+- Request body:
+
+```json
+{ "project_id": int, "note": "string" }
+```
+
+- Validation: `project_id` must be positive.
+- Behavior: inserts a `work_sessions` row with `start_at=NOW()`. The store `StartSession` returns `id`, `start_at`, `created_at`.
+- Success: `201 Created` `{ "session": <WorkSession object>, "status": "active" }`
+- Errors: `400` invalid input. If store returns an error containing `one_active_session_per_user` the handler responds with `400` and message `you already have one active session.Stop it before starting a new sessions`.
+
+Stop session
+
+PATCH /v1/work-sessions/stop/{id}/
+
+- Authentication: required
+- Path param: `{id}` session id; `utils.ReadIdParam` used.
+- Behavior: `workSessionStore.StopSession(ctx, sessionId, user.Id)` — updates the `end_at = NOW()` only if `end_at IS NULL` and `user_id` matches.
+- Success: `200 OK` `{ "message": "session stopped", "session_id": <id> }`
+- Errors: `400` invalid id, `401` unauthorized, `404` if no matching active session, `500` internal.
+
+List sessions
+
+GET /v1/work-sessions/list/
+
+- Authentication: required
+- Query params (inferred from handler):
+  - `page` (int, default 1)
+  - `page_size` (int, default 50)
+  - `search` (string, optional) — searched against project name, user name, user email, and note
+  - `active` (bool string `true`/`false`, optional) — filter active/inactive
+  - `project_id` (int, optional)
+  - `user_id` (int, optional) — admin-only; non-admins have `user_id` forced to their own id
+
+- Pagination: `WorkSessionFilter.Validate()` used; metadata returned by `store.CalculateMetadata`.
+- Success: `200 OK` `{ "result": [WorkSessionRow], "metadata": { ... } }`
+
+Summary report
+
+GET /v1/work-sessions/reports/
+
+- Authentication: required
+- Query params (required): `from`, `to` — supported formats: RFC3339 or `YYYY-MM-DD` (handler attempts both).
+- Optional query params: `project_id` (int), `user_id` (int, admin only).
+- Behavior: non-admins are forced to `user_id=self`. Admins may specify `user_id` or omit to get all users. The handler constructs `store.SummaryRangeFilter{FromDate, ToDate, ProjectID?, UserID?}` and calls `GetSummaryReport`.
+- Success: `200 OK` `{ "report": <SummaryReport> }` where `SummaryReport` contains `from`, `to`, `filters`, `overall`, `users`, and `projects` sections (see Data Models).
+- Errors: `400` missing/invalid `from`/`to`, invalid integers, `401` unauthorized, `500` internal.
+
+#### Users & Admin
+
+Update user
+
+PATCH /v1/users/{id}/
+
+- Authentication: required
+- Roles / permissions: admin may update any user; non-admins may only update their own user record (handler verifies this).
+- Request body (all fields optional):
+
+```json
+{
+  "name": "string",
+  "email": "email@example.com",
+  "old_password": "string",
+  "new_password": "string",
+  "role": "user|admin",    // admin-only
+  "is_active": true|false   // admin-only
+}
+```
+
+- Validation & behavior:
+  - Non-admins attempting to change `role` or `is_active` receive `403 Forbidden`.
+  - To change password both `old_password` and `new_password` must be supplied; `old_password` is verified with the stored hash.
+  - Email uniqueness is enforced via `GetUserByEmail`.
+  - Success: `200 OK` `{ "user": <User> }` with updated user record.
+
+Admin: list users
+
+GET /v1/admin/users/
+
+- Authentication: required (admin only)
+- Query params: `search`, `page`, `page_size`, `sort` (safe-list: `id`, `email`, `name`), `is_active` (bool), `is_locked` (bool)
+- Success: `200 OK` `{ "result": [User], "metadata": Metadata }`
+
+Admin: generate reset token
+
+POST /v1/admin/reset-tokens/
+
+- Authentication: required (admin only)
+- Request body: `{ "email": "user@example.com" }` — email normalized to lower-case in code
+- Behavior: finds user by email; if found calls `JWT.CreateResetToken(user.Id, user.Email, user.Role, user.IsActive, ttl)` with `ttl = 10 * time.Minute` and returns token string and expiry timestamp formatted with `time.RFC3339`.
+- Success: `200 OK` `{ "reset_token": "<token>", "expires_at": "RFC3339 timestamp" }`
+
+---
+
+## 5. Core resources (models used in API)
+
+Models are defined in `internal/store/*.go`. Below are the fields and where they are used in API responses.
+
+### User
+
+Source: `internal/store/user_store.go`
+
+| Field | Type | Description | Required |
+|---|---:|---|---:|
+| `Id` | int64 | primary identifier | yes |
+| `Name` | string | display name | yes |
+| `Email` | string | email address | yes |
+| `PasswordHash` | password (internal) | password hash (not returned in API) | internal |
+| `Role` | string | `user` or `admin` | yes |
+| `IsActive` | bool | whether account is active | yes |
+| `CreatedAt` | time.Time | created timestamp | yes |
+| `UpdatedAt` | time.Time | updated timestamp | optional |
+| `IsLocked` | bool | account lock flag (internal, not exposed by most endpoints) | internal |
+
+Note: API responses expose `id`, `name`, `email`, `role`, `is_active`, and timestamps; internal fields for lockout are not generally returned by endpoints (list users does include `is_locked` field via SQL projection).
+
+### Project / ProjectRow
+
+Source: `internal/store/project.go`
+
+Project (used in create response):
+
+| Field | Type | Description | Required |
+|---|---:|---|---:|
+| `ProjectId` | int64 | id (returned on create) | yes |
+| `ProjectName` | string | project name | yes |
+| `StatusId` | int64 | FK to statuses | yes |
+
+ProjectRow (used in list):
+
+| Field | Type | Description |
+|---|---:|---|
+| `id` | int64 | project id |
+| `name` | string | project name |
+| `status` | object | `{ "id": int, "name": string }` project status |
+
+### Status
+
+Source: `internal/store/statuses.go`
+
+| Field | Type | Description |
+|---|---:|---|
+| `id` | int64 | status id |
+| `name` | string | status name |
+
+### WorkSession / WorkSessionRow / WorkSessionResponse
+
+Source: `internal/store/work_session.go`
+
+WorkSession (used internally when creating):
+
+| Field | Type | Description |
+|---|---:|---|
+| `Id` | int64 | session id |
+| `UserId` | int64 | user id |
+| `ProjectId` | int64 | project id |
+| `StartAt` | time.Time | start timestamp |
+| `EndAt` | *time.Time | nullable end timestamp |
+| `Note` | string | free text note |
+
+WorkSessionResponse (used in rows):
+
+| Field | Type | Description |
+|---|---:|---|
+| `id` | int64 | session id |
+| `start_at` | time.Time | start timestamp |
+| `end_at` | *time.Time | nullable |
+| `note` | string | note |
+| `created_at` | time.Time | created timestamp |
+
+WorkSessionRow (list row):
+
+| Field | Type | Description |
+|---|---:|---|
+| `user` | object | `{ user_id, name, email, is_active }` |
+| `project` | object | `ProjectRow` (nested) |
+| `sessions` | object | `WorkSessionResponse` |
+| `status` | string | derived `active` or `inactive` |
+
+Summary report models: `SummaryReport`, `OverallSummary`, `UserSummary`, `ProjectSummary` — see `internal/store/work_session.go` for exact JSON keys and structures returned by the report endpoint.
+
+---
+
+## 6. Role-Based Access Control (quick table)
+
+| Endpoint | Auth required | Admin | Regular user |
+|---|---:|---:|---:|
+| GET /health | No | — | — |
+| POST /v1/auth/register/ | No | — | — |
+| POST /v1/auth/login/ | No | — | — |
+| POST /v1/auth/reset-password/ | No (token in body) | — | — |
+| GET /v1/statuses | Yes | Yes | Forbidden (handler enforces admin) |
+| GET /v1/projects | Yes | Read | Read |
+| POST /v1/projects/ | Yes | Create | Forbidden |
+| PATCH /v1/project/{id}/ | Yes | Update | Forbidden |
+| PATCH /v1/users/{id}/ | Yes | Update any | Update self only |
+| GET /v1/admin/users/ | Yes | List | Forbidden |
+| POST /v1/admin/reset-tokens/ | Yes | Create | Forbidden |
+| POST /v1/work-sessions/start/ | Yes | Start own | Start own |
+| PATCH /v1/work-sessions/stop/{id}/ | Yes | Stop if user matches | Stop own |
+| GET /v1/work-sessions/list/ | Yes | Can filter by user_id | Only own sessions (user_id forced) |
+| GET /v1/work-sessions/reports/ | Yes | Admin may request other users or all; non-admin forced to self | Non-admin forced to self |
+
+---
+
+## 7. Environment Differences
+
+- Development behavior (from `main.go` and `internal/config`):
+  - `godotenv.Load()` is called in `main.go` to support local `.env` files (development convenience).
+  - `internal/config.Load()` defaults: `ENV=development`, `LIMITER_ENABLED=true`, `LIMITER_RPS=2`, `LIMITER_BURST=4`. These are only configuration defaults; enabling does not automatically apply rate limiting unless code adds a limiter middleware (not present in current codebase).
+
+- Production requirements:
+  - `WORKTIME_DB_DSN` / `DATABASE_URL` must be correctly set for DB connectivity.
+  - `WORKTIME_JWT_SECRET` / `JWT_SECRET` should be set to a secure, non-default value; code includes a fallback default for convenience which must be replaced for production.
+
+---
+
+## 8. Limitations & Code-level caveats (explicitly observed in source)
+
+These are concrete limitations and caveats found in the code; they are not assumptions.
+
+1. Rate limiting not applied: `internal/config` exposes limiter configuration, but there is no middleware wired to enforce rate limits.
+
+2. Reset token fields mismatch: `CreateResetToken` includes an `is_active` claim when creating reset tokens, but `ResetClaims` used in `ParseResetToken` does not expose an `IsActive` field; the handler only reads `UserID` and `Email` from parsed claims.
+
+3. Account lockout flow implemented in DB layer and used in `TokenHandler.LoginHandler` (see Authentication & Security), but details of lockout timing/thresholds are enforced by stored fields and handler checks as described above.
+
+4. Minor inconsistencies in response envelopes across handlers: top-level keys differ between endpoints (e.g., `result` vs `projects` vs `project` vs `user`) — clients must handle per-endpoint shapes.
+
+5. Error message and status variances: some handlers return `400` for duplication errors (register) rather than `409`.
+
+6. Implementation notes affecting correctness: while deriving the API we noticed a few code-level issues that could impact behavior (these are recorded here because they are present in source):
+   - The existing `docs` file previously noted two bugs; confirm by running/integration tests if you plan to rely on project create/update flows. (If you want, I can open the files and implement small fixes — ask to proceed.)
+
+---
+
+## 9. Where to look in the code
+
+- Router and endpoints: [internal/router/routes.go](internal/router/routes.go)
+- Handlers: [internal/api/](internal/api/) — `user_handler.go`, `token_handler.go`, `project_handler.go`, `status_handler.go`, `work_session_handler.go`
+- Auth/JWT: [internal/auth/jwt.go](internal/auth/jwt.go)
+- Middleware: [internal/middleware/middleware.go](internal/middleware/middleware.go)
+- Store models and DB access: [internal/store/](internal/store/)
+- Config defaults: [internal/config/config.go](internal/config/config.go)
+- Main program: [main.go](main.go)
+
+---
+
+If you'd like, next steps I can take (pick one):
+- Produce a compact OpenAPI 3.0 spec (YAML) generated from these derived shapes.
+- Add `curl` examples for the most-used endpoints (login, start/stop session, report).
+- Implement small fixes for the noted code-level issues (I can update handlers/store with tests).
+# Worktime API Documentation
+
 ## Overview
 
 Worktime is a RESTful backend for simple time-tracking: users can register, log in, start/stop work sessions on projects, and admins can manage users/projects and generate summary reports.

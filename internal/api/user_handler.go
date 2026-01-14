@@ -95,8 +95,8 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	authUser := middleware.GetUser(r)
-	if authUser == nil || authUser.Id <= 0 {
+	authUser, ok := middleware.GetUser(r)
+	if !ok || authUser == nil || authUser.Id <= 0 {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
@@ -216,7 +216,7 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 		err = existingUser.PasswordHash.Set(*req.NewPassword)
 		if err != nil {
 			uh.logger.Println("error while setting new password", err)
-			utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error:": "internal server error"})
+			utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 			return
 		}
 	}
@@ -234,8 +234,8 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 func (uh *UserHandler) HandleListUsers(w http.ResponseWriter, r *http.Request) {
 	var input store.ListUserInput
 
-	user := middleware.GetUser(r)
-	if user == nil || user.Role != "admin" {
+	user, ok := middleware.GetUser(r)
+	if !ok || user == nil || user.Role != "admin" {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
@@ -281,9 +281,10 @@ func (uh *UserHandler) HandleListUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (uh *UserHandler) HandleGenerateResetToken(w http.ResponseWriter, r *http.Request) {
-	u := middleware.GetUser(r)
-	if u.Role != "admin" {
+	u , ok := middleware.GetUser(r)
+	if !ok || u == nil || u.Role != "admin" {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		return
 	}
 	var input struct {
 		Email string `json:"email"`

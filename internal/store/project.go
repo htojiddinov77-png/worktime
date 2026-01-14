@@ -34,7 +34,7 @@ type Project struct {
 type ProjectStore interface {
 	CreateProject(ctx context.Context, project *Project) error
 	ListProjects(ctx context.Context) ([]ProjectRow, error)
-	UpdateProject(ctx context.Context, id int64) error
+	UpdateProject(ctx context.Context, id int64, name *string, statusID *int64) error
 	DeleteProject(ctx context.Context, id int64) error
 }
 
@@ -93,17 +93,28 @@ func (pg *PostgresProjectStore) ListProjects(ctx context.Context) ([]ProjectRow,
 	return out, nil
 }
 
-func (pg *PostgresProjectStore) UpdateProject(ctx context.Context, id int64) error {
-	project := &Project{}
-	query := `UPDATE projects
-	SET name = $1, status_id = $2
-	WHERE id = $3`
+func (pg *PostgresProjectStore) UpdateProject(ctx context.Context, id int64, name *string, statusID *int64) error {
+	query := `
+		UPDATE projects
+		SET
+			name      = COALESCE($1, name),
+			status_id = COALESCE($2, status_id)
+		WHERE id = $3
+	`
 
-	_,err := pg.db.ExecContext(ctx, query,project.ProjectName, project.StatusId, id)
+	res, err := pg.db.ExecContext(ctx, query, name, statusID, id)
 	if err != nil {
 		return err
 	}
 
+	// Recommended: detect "id not found"
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
+		return sql.ErrNoRows
+	}
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

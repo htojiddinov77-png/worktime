@@ -15,7 +15,6 @@ type ProjectHandler struct {
 	projectStore store.ProjectStore
 	userStore    store.UserStore
 	logger       *log.Logger
-
 }
 
 func NewProjectHandler(projectStore store.ProjectStore, userStore store.UserStore, logger *log.Logger) *ProjectHandler {
@@ -54,8 +53,8 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	u := middleware.GetUser(r)
-	if u.Id <= 0 {
+	u, ok := middleware.GetUser(r)
+	if !ok || u.Id <= 0 {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
@@ -78,6 +77,7 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 
 	pj := &store.Project{
 		ProjectName: req.Name,
+		StatusId:    req.StatusId,
 	}
 
 	if err := ph.projectStore.CreateProject(r.Context(), pj); err != nil {
@@ -109,15 +109,15 @@ func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Requ
 }
 
 func (ph *ProjectHandler) HandleUpdateProject(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r)
-	if user == nil || user.Role != "admin" {
+	user , ok := middleware.GetUser(r)
+	if !ok || user == nil || user.Role != "admin" {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
 
 	var req struct {
-		Name     string `json:"name"`
-		StatusId int64  `json:"status_id"`
+		Name     *string `json:"name"`
+		StatusId *int64  `json:"status_id"`
 	}
 
 	dec := json.NewDecoder(r.Body)
@@ -128,22 +128,39 @@ func (ph *ProjectHandler) HandleUpdateProject(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	if req.Name == nil && req.StatusId == nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "at least one field is required: name or status_id"})
+		return
+	}
+
+	
+	if req.Name != nil {
+		n := strings.TrimSpace(*req.Name)
+		if n == "" {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "name cannot be empty"})
+			return
+		}
+		req.Name = &n 
+	}
+
+	
+	if req.StatusId != nil && *req.StatusId <= 0 {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "status_id must be positive"})
+		return
+	}
+
 	projectId, err := utils.ReadIdParam(r)
 	if err != nil {
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid id"})
 		return
 	}
 
-	err = ph.projectStore.UpdateProject(r.Context(), projectId)
+	err = ph.projectStore.UpdateProject(r.Context(), projectId, req.Name, req.StatusId)
 	if err != nil {
+		ph.logger.Println("error updating project:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
 
-	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "project updated succesfully"})
+	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "project updated successfully"})
 }
-
-
-
-
-

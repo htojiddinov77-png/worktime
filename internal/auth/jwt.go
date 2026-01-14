@@ -30,6 +30,10 @@ type ResetClaims struct {
 
 var AnonymousUser = &UserClaims{}
 
+func (u *UserClaims) IsAnonymous() bool {
+	return u == nil || u.Id == 0
+}
+
 type JWTManager struct {
 	secretKey []byte
 	ttl       time.Duration

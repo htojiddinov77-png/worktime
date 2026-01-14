@@ -78,8 +78,8 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 	}
 	req.Note = strings.TrimSpace(req.Note)
 
-	user := middleware.GetUser(r)
-	if user == nil {
+	user, ok := middleware.GetUser(r)
+	if !ok || user == nil {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
 		return
 	}
@@ -97,6 +97,7 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{
 				"error": "you already have one active session.Stop it before starting a new sessions",
 			})
+			return
 		}
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
@@ -116,8 +117,8 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	user := middleware.GetUser(r)
-	if user == nil {
+	user, ok := middleware.GetUser(r)
+	if !ok || user == nil {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
 		return
 	}
@@ -142,9 +143,8 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
-	u := middleware.GetUser(r)
-	if u == nil || u.Id <= 0 {
-	
+	u, ok:= middleware.GetUser(r)
+	if u == nil || u.Id <= 0 || !ok {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
@@ -220,8 +220,8 @@ func (wh *WorkSessionHandler) HandleGetSummaryReport(w http.ResponseWriter, r *h
 	q := r.URL.Query()
 
 	// 1) Auth
-	authUser := middleware.GetUser(r)
-	if authUser == nil || authUser.Id <= 0 {
+	authUser, ok := middleware.GetUser(r)
+	if !ok || authUser == nil || authUser.Id <= 0 {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}

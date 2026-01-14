@@ -22,12 +22,9 @@ func SetUser(r *http.Request, user *auth.UserClaims) *http.Request {
 	return r.WithContext(ctx)
 }
 
-func GetUser(r *http.Request) *auth.UserClaims {
+func GetUser(r *http.Request) (*auth.UserClaims, bool) {
 	user, ok := r.Context().Value(UserContextKey).(*auth.UserClaims)
-	if !ok {
-		panic("missing user in request")
-	}
-	return user
+	return user, ok
 }
 
 func (m *Middleware) Authenticate(next http.Handler) http.Handler {

@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/htojiddinov77-png/worktime/internal/middleware"
 	"github.com/htojiddinov77-png/worktime/internal/store"
 	"github.com/htojiddinov77-png/worktime/internal/utils"
 )
@@ -16,6 +17,12 @@ func NewStatusHandler(statusStore store.StatusStore) *StatusHandler {
 }
 
 func (h *StatusHandler) HandleGetAllStatuses(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.GetUser(r)
+	if !ok || user == nil || user.Role != "admin" {
+		utils.WriteJson(w, http.StatusForbidden, utils.Envelope{"error": "forbidden"})
+		return
+	}
+
 	statuses, err := h.StatusStore.GetAllStatuses(r.Context())
 	if err != nil {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{

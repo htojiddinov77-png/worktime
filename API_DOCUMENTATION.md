@@ -635,7 +635,6 @@ for admin
     ]
 }
 
-
 ### GET /work-sessions/reports/
 Get a summary report.
 
@@ -648,6 +647,9 @@ Query Parameters:
 | user_id | integer | Optional (admin-only) |
 
 Response: `200 OK`
+
+
+
 
 ```json
 {

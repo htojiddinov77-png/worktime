@@ -106,7 +106,7 @@ func (pg *PostgresProjectStore) UpdateProject(ctx context.Context, id int64, nam
 		return err
 	}
 
-	// Recommended: detect "id not found"
+	
 	rows, err := res.RowsAffected()
 	if err == nil && rows == 0 {
 		return sql.ErrNoRows

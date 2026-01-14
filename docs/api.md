@@ -1,6 +1,512 @@
 # Worktime API Documentation
 
-This file documents the HTTP API implemented by the repository source code. All descriptions are derived directly from the code (routers, handlers, middleware, store types and migrations). If something is ambiguous or missing in the code, it is listed in **Known Limitations**.
+## Overview
+
+Worktime is a RESTful backend for simple time-tracking: users can register, log in, start/stop work sessions on projects, and admins can manage users/projects and generate summary reports.
+
+**Base URL (local dev):** `http://localhost:4000/v1`
+
+Configuration notes:
+- Port: `WORKTIME_PORT` (default 4000)
+- Database DSN: `WORKTIME_DB_DSN` (required)
+- JWT secret: `WORKTIME_JWT_SECRET` (fallback default present in code; do not use in production)
+
+Tech stack: Go, chi router, PostgreSQL (pgx), goose migrations, JWT (HMAC-SHA256)
+
+---
+
+## Table of contents
+1. [Authentication](#authentication)
+2. [Response format](#response-format)
+3. [Error handling](#error-handling)
+4. [Pagination & filtering](#pagination--filtering)
+5. [Endpoints](#endpoints)
+   - Health
+   - Authentication
+   - Users
+   - Projects
+   - Statuses
+   - Work sessions & Reports
+6. [Data models](#data-models)
+7. [Role-based access control](#role-based-access-control)
+8. [Rate limiting & security](#rate-limiting--security)
+9. [Development vs Production](#development-vs-production)
+10. [Known limitations](#known-limitations)
+
+---
+
+## Authentication
+
+The API uses JWT Bearer authentication. Include the token in the `Authorization` header:
+
+```
+Authorization: Bearer <access_token>
+```
+
+Obtaining a token
+- POST `/v1/auth/login/` with JSON `{ "email": string, "password": string }`. Response includes `token` (string), `name` and `role`.
+
+Token claims (access tokens):
+
+| Field | Type | Description |
+|---|---:|---|
+| `user_id` | integer | user id |
+| `email` | string | user email |
+| `role` | string | `user` or `admin` |
+| `exp` | integer | expiration (unix timestamp) |
+
+Reset tokens (admin can generate) include `user_id`, `email`, `role`, `is_active`, and `exp`. Reset tokens are created with a 10-minute TTL by admin handler.
+
+Role-based access: handlers check `role` string (`user` or `admin`) where applicable.
+
+---
+
+## Response format
+
+All handlers write JSON via `utils.WriteJson` which emits an object envelope (map[string]interface{}). Common envelope keys used across handlers:
+
+- `error` — string (for errors)
+- `user`, `token`, `name`, `role` — auth responses
+- `statuses` — list of status objects
+- `projects`, `count` — project listing
+- `session`, `status` — start session response
+- `result`, `metadata` — list responses with pagination
+- `report` — report object
+
+There is no single enforced top-level `data` key; handlers vary. See Known Limitations for details.
+
+---
+
+## Error handling
+
+Error responses use the envelope `{ "error": "message" }` and appropriate HTTP status codes.
+
+Common status codes used:
+
+| Status | Meaning |
+|---:|---|
+| 200 | OK |
+| 201 | Created |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 409 | Conflict (used in some handlers) |
+| 500 | Internal Server Error |
+
+---
+
+## Pagination & filtering
+
+Pagination params used by store filter helpers:
+
+| Param | Type | Default | Notes |
+|---|---:|---:|---|
+| `page` | integer | 1 | Page must be 1..10_000_000
+| `page_size` | integer | 50 | Page size must be 1..1000
+| `sort` | string | `id` | Safe-list enforced per handler; prefix `-` for DESC
+
+Metadata format returned by list endpoints (from `store.Metadata`):
+
+```json
+{
+  "current_page": 1,
+  "page_size": 50,
+  "first_page": 1,
+  "last_page": 10,
+  "total_records": 500
+}
+```
+
+---
+
+## Endpoints
+
+All endpoints are mounted under `/v1`.
+
+### Health
+
+```
+GET /health
+```
+
+Auth: not required
+
+Response: `200 OK` (empty body)
+
+---
+
+### Authentication endpoints
+
+#### Register
+
+```
+POST /v1/auth/register/
+```
+
+Auth: not required
+
+Request body:
+
+```json
+{ "name": "string", "email": "user@example.com", "password": "string" }
+```
+
+Validation:
+- `email` must match regex in code
+- email must be unique
+
+Success (201):
+
+```json
+{ "user": { "id": 1, "name": "...", "email": "...", "role": "user", "is_active": true, "created_at": "...", "updated_at": "..." } }
+```
+
+Errors: 400 invalid payload/email, 400 duplicate email (handler responds with message `Email is already exists`), 500 internal error
+
+#### Login
+
+```
+POST /v1/auth/login/
+```
+
+Auth: not required
+
+Request body: `{ "email": string, "password": string }`
+
+Behavior & validations:
+- Reject if user not found or `is_active == false`
+- If `is_locked` and `time.Since(last_failed_login) < 24h`, login is rejected
+- On password mismatch: `LoginFail` increments `failed_attempts`; if `FailedAttempts+1 > 4` then `Lockout` is invoked
+- On success: `Unlock` is called and a JWT is returned
+
+Success (200):
+
+```json
+{ "token": "<jwt>", "name": "User Name", "role": "user" }
+```
+
+Errors: 400 malformed, 401 unauthorized (invalid credentials/inactive/locked), 500 internal
+
+#### Reset password (public)
+
+```
+POST /v1/auth/reset-password/
+```
+
+Auth: not required (token provided in body)
+
+Request body:
+
+```json
+{ "token": "<reset-token>", "new_password": "...", "confirm_password": "..." }
+```
+
+Behavior: parses reset token (`ParseResetToken`), verifies token user exists and email matches DB, sets new password via `UpdatePasswordPlain`.
+
+Success (200): `{ "message": "password updated" }`
+
+Errors: 400 invalid/expired token or passwords mismatch, 500 internal
+
+---
+
+### Users
+
+#### Update user
+
+```
+PATCH /v1/users/{id}/
+```
+
+Auth: required
+
+Roles: admin can update any user; regular users can update themselves only
+
+Path param: `{id}`
+
+Request body (all fields optional):
+
+```json
+{
+  "name": "string",            // optional
+  "email": "email@example.com", // optional
+  "old_password": "string",    // optional (required to change password)
+  "new_password": "string",    // optional
+  "role": "user|admin",        // admin-only
+  "is_active": true|false       // admin-only
+}
+```
+
+Validations & behavior:
+- If non-admin supplies `role` or `is_active` -> 403
+- Email must be unique
+- To change password both `old_password` and `new_password` are required and old password must match
+
+Success (200): `{ "user": { ...updated user fields... } }`
+
+Errors: 400 bad request, 401/403 unauthorized/forbidden, 404 user not found, 500 internal
+
+#### List users (admin)
+
+```
+GET /v1/admin/users/
+```
+
+Auth: required (admin only)
+
+Query params: `search`, `page`, `page_size`, `sort` (safe-list: `id`, `email`, `name`), `is_active` (bool), `is_locked` (bool)
+
+Success (200): `{ "result": [ users... ], "metadata": Metadata }`
+
+---
+
+### Statuses
+
+```
+GET /v1/statuses
+```
+
+Auth: middleware applied but no explicit role required
+
+Success (200): `{ "statuses": [ { "id": 1, "name": "active" }, ... ] }`
+
+---
+
+### Projects
+
+#### List projects
+
+```
+GET /v1/projects
+```
+
+Auth: middleware applied
+
+Success (200): `{ "count": int, "projects": [ ProjectRow ] }`
+
+`ProjectRow` shape: `{ "id": int, "name": string, "status": { "id": int, "name": string } }`
+
+#### Create project (admin)
+
+```
+POST /v1/projects/
+```
+
+Auth: required, admin only
+
+Request body:
+
+```json
+{ "name": "Project name", "status_id": 1 }
+```
+
+Validations: `name` non-empty, `status_id` > 0
+
+Success (201): `{ "message": "project created successfully", "project": { "project_id": int, "project_name": string } }`
+
+#### Update project (admin)
+
+```
+PATCH /v1/project/{id}/
+```
+
+Auth: required, admin only
+
+Request body: `{ "name": string, "status_id": int }`
+
+Success (200): `{ "message": "project updated succesfully" }`
+
+---
+
+### Work sessions
+
+#### Start session
+
+```
+POST /v1/work-sessions/start/
+```
+
+Auth: required
+
+Request body:
+
+```json
+{ "project_id": int, "note": "string" }
+```
+
+Validation: `project_id` must be positive
+
+Success (201):
+
+```json
+{ "session": { "id": 1, "user_id": 2, "project_id": 3, "start_at": "...", "end_at": null, "note": "...", "created_at": "..." }, "status": "active" }
+```
+
+Edge case: a unique partial index `one_active_session_per_user` prevents multiple active sessions per user. If violated, handler maps DB error to 400 advising to stop existing session.
+
+#### Stop session
+
+```
+PATCH /v1/work-sessions/stop/{id}/
+```
+
+Auth: required
+
+Behavior: stops session only if `id` belongs to authenticated user (store uses `WHERE id=$1 AND user_id=$2 AND end_at IS NULL`)
+
+Success (200): `{ "message": "session stopped", "session_id": id }`
+
+Errors: 404 if no active session found, 400 invalid id, 401 unauthorized
+
+#### List sessions
+
+```
+GET /v1/work-sessions/list/
+```
+
+Auth: required
+
+Query params: `page`, `page_size`, `search`, `active` (bool), `project_id`, `user_id` (admin-only)
+
+Success (200):
+
+```json
+{ "result": [ WorkSessionRow ], "metadata": Metadata }
+```
+
+`WorkSessionRow` shape (abbreviated):
+
+```json
+{
+  "user": { "user_id": int, "name": string, "email": string, "is_active": bool },
+  "project": { "id": int, "name": string, "status": { "id": int, "name": string } },
+  "sessions": { "id": int, "start_at": string, "end_at": string|null, "note": string, "created_at": string },
+  "status": "active"|"inactive"
+}
+```
+
+---
+
+### Reports
+
+```
+GET /v1/work-sessions/reports/
+```
+
+Auth: required
+
+Query params (required): `from` and `to` — handler accepts RFC3339 or `YYYY-MM-DD` and normalizes to UTC day boundaries. Optional `project_id`. Optional `user_id` (admin only).
+
+Success (200): `{ "report": SummaryReport }` where `SummaryReport` includes `from`, `to`, `filters`, `overall` (total_sessions, total_durations), `users`, `projects` as defined in `internal/store/work_session.go`.
+
+---
+
+## Data models (examples)
+
+### User
+
+```json
+{
+  "id": 1,
+  "name": "Alice",
+  "email": "alice@example.com",
+  "role": "user",
+  "is_active": true,
+  "created_at": "2025-01-01T12:00:00Z",
+  "updated_at": "2025-01-02T12:00:00Z"
+}
+```
+
+### ProjectRow
+
+```json
+{
+  "id": 1,
+  "name": "Website Redesign",
+  "status": { "id": 1, "name": "active" }
+}
+```
+
+### WorkSessionRow (abbreviated)
+
+```json
+{
+  "user": { "user_id": 2, "name": "Bob", "email": "bob@example.com", "is_active": true },
+  "project": { "id": 3, "name": "Proj X", "status": { "id": 1, "name": "active" } },
+  "sessions": { "id": 10, "start_at": "2025-01-10T09:00:00Z", "end_at": "2025-01-10T11:00:00Z", "note": "Work", "created_at": "2025-01-10T09:00:00Z" },
+  "status": "inactive"
+}
+```
+
+---
+
+## Role-based access control (summary)
+
+| Endpoint | Admin | User |
+|---|---:|---:|
+| POST /v1/auth/register/ | no | public |
+| POST /v1/auth/login/ | no | public |
+| POST /v1/auth/reset-password/ | no | public (token) |
+| GET /v1/statuses | yes | yes |
+| GET /v1/projects | yes | yes |
+| POST /v1/projects/ | yes | no |
+| PATCH /v1/project/{id}/ | yes | no |
+| PATCH /v1/users/{id}/ | yes (any) | yes (self only) |
+| GET /v1/admin/users/ | yes | no |
+| POST /v1/admin/reset-tokens/ | yes | no |
+| POST /v1/work-sessions/start/ | yes | yes |
+| PATCH /v1/work-sessions/stop/{id}/ | yes? (store enforces user match) | yes (own) |
+| GET /v1/work-sessions/list/ | yes (can filter by user) | yes (own only) |
+| GET /v1/work-sessions/reports/ | yes (can request for other users) | yes (forced to self) |
+
+Notes: handlers enforce roles via checks in code. Some handlers return 401/403 depending on context.
+
+---
+
+## Rate limiting & security
+
+- Rate limiting: not implemented in codebase.
+- Account lockout: after repeated failed logins the store sets `is_locked` and resets failed attempts — login handler enforces 24-hour rejection logic based on `last_failed_login`.
+- Password hashing: bcrypt with cost 12.
+
+---
+
+## Development vs Production
+
+Development behaviors in code:
+
+- `main.go` calls `godotenv.Load()` to load `.env` (development convenience)
+- CORS allowed origins in `main.go` include `http://localhost:5173` and `http://localhost:3000` (development defaults)
+
+Production considerations (not enforced by code):
+
+- Provide a secure `WORKTIME_JWT_SECRET` (do not rely on fallback default).
+- Provide `WORKTIME_DB_DSN` pointing to production Postgres.
+
+---
+
+## Known limitations (observed in source)
+
+1. Project create/update bug:
+   - `POST /v1/projects/` validates `status_id` but the handler does not set `StatusId` on the `store.Project` before calling `CreateProject`, so created row may have a missing or zero `status_id`.
+   - `PATCH /v1/project/{id}/` decodes `name` and `status_id` but does not pass them to the store; `PostgresProjectStore.UpdateProject` uses an empty `Project{}` and will not update fields correctly.
+
+2. Double-write path:
+   - `POST /v1/work-sessions/start/` maps DB unique-index errors to a 400 response but fails to return immediately; flow can continue and write a 500 response as well.
+
+3. Response key typo:
+   - In `HandleUpdateUser` one error path uses key `"error:"` (with trailing colon) instead of `"error"`.
+
+4. Inconsistent envelope shape across handlers. Some handlers return `result` + `metadata`, others `user` or `session` or `count` + `projects`. Clients should be tolerant of varying envelope keys or the code should be normalized.
+
+5. Rate limiting is not implemented.
+
+If you want, I can now:
+- Produce an OpenAPI (Swagger) spec that matches this documentation.
+- Add example curl requests for each endpoint.
+- Fix the identified logical bugs and add unit tests.
+
+Generated from source on: 2026-01-14
 
 ---
 

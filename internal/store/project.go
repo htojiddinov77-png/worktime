@@ -14,21 +14,20 @@ func NewPostgresProjectStore(db *sql.DB) *PostgresProjectStore {
 }
 
 type ProjectStatus struct {
-    Id   int64  `json:"id"`
-    Name string `json:"name"`
+	Id   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 type ProjectRow struct {
-    Id     int64         `json:"id"`
-    Name   string        `json:"name"`
-    Status ProjectStatus `json:"status"`
+	Id     int64         `json:"id"`
+	Name   string        `json:"name"`
+	Status ProjectStatus `json:"status"`
 }
 
-
 type Project struct {
-	ProjectId       int64  `json:"project_id"`
-	ProjectName     string `json:"project_name"`
-	StatusId int64  `json:"status_id"`
+	ProjectId   int64  `json:"project_id"`
+	ProjectName string `json:"project_name"`
+	StatusId    int64  `json:"status_id"`
 }
 
 type ProjectStore interface {

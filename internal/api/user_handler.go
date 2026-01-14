@@ -386,10 +386,10 @@ func (uh *UserHandler) HandleResetPassword(w http.ResponseWriter, r *http.Reques
 	}
 
 	// extra safety: token email must match DB email
-	if strings.ToLower(strings.TrimSpace(user.Email)) != strings.ToLower(strings.TrimSpace(claims.Email)) {
-		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "token doesn't match"})
-		return
-	}
+	if !strings.EqualFold(user.Email, claims.Email) {
+    utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "token doesn't match"})
+    return
+}
 
 	if err := user.PasswordHash.Set(input.NewPassword); err != nil {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})

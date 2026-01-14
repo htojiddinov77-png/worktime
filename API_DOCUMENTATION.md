@@ -69,12 +69,6 @@ All responses are returned in JSON format.
 }
 ```
 
-### Message Response
-```json
-{
- "message": "project updated successfully"
-}
-```
 
 ## Error Handling
 ### Error Response Format
@@ -177,9 +171,10 @@ Request Body:
 Response: `200 OK`
 ```json
 {
- "token": "jwt.token.here",
  "name": "Jane Doe",
- "role": "user"
+ "role": "user",
+ "token": "jwt.token.here",
+
 }
 ```
 
@@ -204,18 +199,22 @@ Response: `200 OK`
 
 ## Status Endpoints
 
-### GET /statuses
+### GET /statuses/
 List all project statuses (admin-only).
 
 Response: `200 OK`
 ```json
 {
- "statuses": [
-  {
-   "id": 1,
-   "name": "active"
-  }
- ]
+    "statuses": [
+        {
+            "id": 1,
+            "name": "active"
+        },
+        {
+            "id": 2,
+            "name": "inactive"
+        }
+    ]
 }
 ```
 
@@ -229,17 +228,25 @@ List projects.
 Response: `200 OK`
 ```json
 {
- "count": 2,
- "projects": [
-  {
-   "id": 10,
-   "name": "Website Redesign",
-   "status": {
-    "id": 1,
-    "name": "active"
-   }
-  }
- ]
+    "count": 2,
+    "projects": [
+        {
+            "id": 1,
+            "name": "Cosmos",
+            "status": {
+                "id": 1,
+                "name": "active"
+            }
+        },
+        {
+            "id": 2,
+            "name": "LLC opening",
+            "status": {
+                "id": 1,
+                "name": "active"
+            }
+        }
+    ]
 }
 ```
 
@@ -333,44 +340,300 @@ Query Parameters:
 | project_id | integer | Filter by project ID |
 | user_id | integer | Filter by user ID (admin-only) |
 
+
 Response: `200 OK`
+for regular user 
 ```json
 {
- "result": [
-  {
-   "user": {
-    "user_id": 1,
-    "name": "Jane Doe",
-    "email": "jane@example.com",
-    "is_active": true
-   },
-   "project": {
-    "id": 10,
-    "name": "Website Redesign",
-    "status": {
-     "id": 1,
-     "name": "active"
-    }
-   },
-   "sessions": {
-    "id": 100,
-    "start_at": "2024-01-01T10:00:00Z",
-    "end_at": "2024-01-01T12:00:00Z",
-    "note": "Initial design work",
-    "created_at": "2024-01-01T10:00:00Z"
-   },
-   "status": "inactive"
-  }
- ],
- "metadata": {
-  "current_page": 1,
-  "page_size": 50,
-  "first_page": 1,
-  "last_page": 1,
-  "total_records": 1
- }
+    "metadata": {
+        "current_page": 1,
+        "page_size": 50,
+        "first_page": 1,
+        "last_page": 1,
+        "total_records": 1
+    },
+    "result": [
+        {
+            "user": {
+                "user_id": 6,
+                "name": "nobody",
+                "email": "nobody@gmail.com",
+                "is_active": true
+            },
+            "project": {
+                "id": 2,
+                "name": "LLC opening",
+                "status": {
+                    "id": 1,
+                    "name": "active"
+                }
+            },
+            "sessions": {
+                "id": 19,
+                "start_at": "2026-01-13T15:05:52.566651-05:00",
+                "end_at": "2026-01-13T15:08:31.518004-05:00",
+                "note": "opening LLC with Florida",
+                "created_at": "2026-01-13T15:05:52.566651-05:00"
+            },
+            "status": "inactive"
+        }
+    ]
 }
 ```
+
+for admin
+```json
+{
+    "metadata": {
+        "current_page": 1,
+        "page_size": 50,
+        "first_page": 1,
+        "last_page": 1,
+        "total_records": 10
+    },
+    "result": [
+        {
+            "user": {
+                "user_id": 1,
+                "name": "Nuriddin",
+                "email": "1111@gmail.com",
+                "is_active": true
+            },
+            "project": {
+                "id": 3,
+                "name": "Recruiting",
+                "status": {
+                    "id": 1,
+                    "name": "active"
+                }
+            },
+            "sessions": {
+                "id": 21,
+                "start_at": "2026-01-14T15:06:32.363536-05:00",
+                "end_at": null,
+                "note": "Hiring driver",
+                "created_at": "2026-01-14T15:06:32.363536-05:00"
+            },
+            "status": "active"
+        },
+        {
+            "user": {
+                "user_id": 6,
+                "name": "nobody",
+                "email": "nobody@gmail.com",
+                "is_active": true
+            },
+            "project": {
+                "id": 2,
+                "name": "LLC opening",
+                "status": {
+                    "id": 1,
+                    "name": "active"
+                }
+            },
+            "sessions": {
+                "id": 19,
+                "start_at": "2026-01-13T15:05:52.566651-05:00",
+                "end_at": "2026-01-13T15:08:31.518004-05:00",
+                "note": "opening LLC with Florida",
+                "created_at": "2026-01-13T15:05:52.566651-05:00"
+            },
+            "status": "inactive"
+        },
+        {
+            "user": {
+                "user_id": 3,
+                "name": "Hasanboy",
+                "email": "2222@gmail.com",
+                "is_active": true
+            },
+            "project": {
+                "id": 2,
+                "name": "LLC opening",
+                "status": {
+                    "id": 1,
+                    "name": "active"
+                }
+            },
+            "sessions": {
+                "id": 18,
+                "start_at": "2026-01-13T15:02:32.104552-05:00",
+                "end_at": "2026-01-13T15:06:32.723786-05:00",
+                "note": "opening fucking LLC",
+                "created_at": "2026-01-13T15:02:32.104552-05:00"
+            },
+            "status": "inactive"
+        },
+        {
+            "user": {
+                "user_id": 4,
+                "name": "Ali",
+                "email": "3333@gmail.com",
+                "is_active": true
+            },
+            "project": {
+                "id": 2,
+                "name": "LLC opening",
+                "status": {
+                    "id": 1,
+                    "name": "active"
+                }
+            },
+            "sessions": {
+                "id": 17,
+                "start_at": "2026-01-13T15:02:18.995294-05:00",
+                "end_at": "2026-01-13T15:06:22.617625-05:00",
+                "note": "opening fucking LLC",
+                "created_at": "2026-01-13T15:02:18.995294-05:00"
+            },
+            "status": "inactive"
+        },
+        {
+            "user": {
+                "user_id": 4,
+                "name": "Ali",
+                "email": "3333@gmail.com",
+                "is_active": true
+            },
+            "project": {
+                "id": 1,
+                "name": "Cosmos",
+                "status": {
+                    "id": 1,
+                    "name": "active"
+                }
+            },
+            "sessions": {
+                "id": 7,
+                "start_at": "2026-01-13T14:55:47.750331-05:00",
+                "end_at": "2026-01-13T15:00:31.373384-05:00",
+                "note": "Cosmos",
+                "created_at": "2026-01-13T14:55:47.750331-05:00"
+            },
+            "status": "inactive"
+        },
+        {
+            "user": {
+                "user_id": 3,
+                "name": "Hasanboy",
+                "email": "2222@gmail.com",
+                "is_active": true
+            },
+            "project": {
+                "id": 1,
+                "name": "Cosmos",
+                "status": {
+                    "id": 1,
+                    "name": "active"
+                }
+            },
+            "sessions": {
+                "id": 5,
+                "start_at": "2025-12-26T16:34:44.839577-05:00",
+                "end_at": "2026-01-13T15:01:21.244038-05:00",
+                "note": "",
+                "created_at": "2025-12-26T16:34:44.839577-05:00"
+            },
+            "status": "inactive"
+        },
+        {
+            "user": {
+                "user_id": 1,
+                "name": "Nuriddin",
+                "email": "1111@gmail.com",
+                "is_active": true
+            },
+            "project": {
+                "id": 2,
+                "name": "LLC opening",
+                "status": {
+                    "id": 1,
+                    "name": "active"
+                }
+            },
+            "sessions": {
+                "id": 4,
+                "start_at": "2025-12-26T16:22:40.613695-05:00",
+                "end_at": "2025-12-26T16:32:35.736038-05:00",
+                "note": "",
+                "created_at": "2025-12-26T16:22:40.613695-05:00"
+            },
+            "status": "inactive"
+        },
+        {
+            "user": {
+                "user_id": 1,
+                "name": "Nuriddin",
+                "email": "1111@gmail.com",
+                "is_active": true
+            },
+            "project": {
+                "id": 1,
+                "name": "Cosmos",
+                "status": {
+                    "id": 1,
+                    "name": "active"
+                }
+            },
+            "sessions": {
+                "id": 3,
+                "start_at": "2025-12-23T17:34:08.444308-05:00",
+                "end_at": "2025-12-23T17:36:50.697734-05:00",
+                "note": "",
+                "created_at": "2025-12-23T17:34:08.444308-05:00"
+            },
+            "status": "inactive"
+        },
+        {
+            "user": {
+                "user_id": 1,
+                "name": "Nuriddin",
+                "email": "1111@gmail.com",
+                "is_active": true
+            },
+            "project": {
+                "id": 1,
+                "name": "Cosmos",
+                "status": {
+                    "id": 1,
+                    "name": "active"
+                }
+            },
+            "sessions": {
+                "id": 2,
+                "start_at": "2025-12-22T14:33:33.008725-05:00",
+                "end_at": "2025-12-22T14:34:59.655623-05:00",
+                "note": "working with cosmos again",
+                "created_at": "2025-12-22T14:33:33.008725-05:00"
+            },
+            "status": "inactive"
+        },
+        {
+            "user": {
+                "user_id": 1,
+                "name": "Nuriddin",
+                "email": "1111@gmail.com",
+                "is_active": true
+            },
+            "project": {
+                "id": 1,
+                "name": "Cosmos",
+                "status": {
+                    "id": 1,
+                    "name": "active"
+                }
+            },
+            "sessions": {
+                "id": 1,
+                "start_at": "2025-12-22T13:55:46.540247-05:00",
+                "end_at": "2025-12-22T14:02:04.611948-05:00",
+                "note": "working with cosmos",
+                "created_at": "2025-12-22T13:55:46.540247-05:00"
+            },
+            "status": "inactive"
+        }
+    ]
+}```
 
 ### GET /work-sessions/reports/
 Get a summary report.
@@ -484,24 +747,60 @@ Query Parameters:
 Response: `200 OK`
 ```json
 {
- "result": [
-  {
-   "id": 1,
-   "name": "Jane Doe",
-   "email": "jane@example.com",
-   "role": "user",
-   "is_active": true,
-   "created_at": "2024-01-01T10:00:00Z",
-   "updated_at": "2024-01-01T10:00:00Z"
-  }
- ],
- "metadata": {
-  "current_page": 1,
-  "page_size": 50,
-  "first_page": 1,
-  "last_page": 1,
-  "total_records": 1
- }
+    "metadata": {
+        "current_page": 1,
+        "page_size": 50,
+        "first_page": 1,
+        "last_page": 1,
+        "total_records": 5
+    },
+    "result": [
+        {
+            "id": 1,
+            "name": "Nuriddin",
+            "email": "1111@gmail.com",
+            "role": "admin",
+            "is_active": true,
+            "created_at": "2025-12-22T13:32:02.198667-05:00",
+            "updated_at": "0001-01-01T00:00:00Z"
+        },
+        {
+            "id": 3,
+            "name": "Hasanboy",
+            "email": "2222@gmail.com",
+            "role": "user",
+            "is_active": true,
+            "created_at": "2025-12-22T14:40:32.880166-05:00",
+            "updated_at": "0001-01-01T00:00:00Z"
+        },
+        {
+            "id": 4,
+            "name": "Ali",
+            "email": "3333@gmail.com",
+            "role": "user",
+            "is_active": true,
+            "created_at": "2025-12-22T14:42:52.469669-05:00",
+            "updated_at": "0001-01-01T00:00:00Z"
+        },
+        {
+            "id": 5,
+            "name": "",
+            "email": "ksjdbfkas@gmail.com",
+            "role": "user",
+            "is_active": true,
+            "created_at": "2025-12-30T14:20:54.149253-05:00",
+            "updated_at": "0001-01-01T00:00:00Z"
+        },
+        {
+            "id": 6,
+            "name": "nobody",
+            "email": "nobody@gmail.com",
+            "role": "user",
+            "is_active": true,
+            "created_at": "2026-01-13T15:04:31.36551-05:00",
+            "updated_at": "0001-01-01T00:00:00Z"
+        }
+    ]
 }
 ```
 

@@ -19,8 +19,8 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 		
 		r.Group(func(r chi.Router) {
 			r.Use(app.Middleware.Authenticate)
-			r.Get("/statuses", app.StatusHandler.HandleGetAllStatuses)
-			r.Get("/projects", app.ProjectHandler.HandleListProjects)
+			r.Get("/statuses/", app.StatusHandler.HandleGetAllStatuses)
+			r.Get("/projects/", app.ProjectHandler.HandleListProjects)
 			r.Patch("/project/{id}/", app.ProjectHandler.HandleUpdateProject)
 
 			r.Route("/work-sessions", func(r chi.Router) {

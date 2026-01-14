@@ -1,6 +1,9 @@
 package store
 
-import "database/sql"
+import (
+	"context"
+	"database/sql"
+)
 
 type Status struct {
 	Id   int64  `json:"id"`
@@ -19,6 +22,7 @@ func NewPostgresStatusStore(db *sql.DB) *PostgresStatusStore {
 
 type StatusStore interface {
 	GetStatusbyId(id int64) (*Status, error)
+	GetAllStatuses(ctx context.Context) ([]*Status, error)
 }
 
 func (pg *PostgresStatusStore) GetStatusbyId(id int64) (*Status, error) {
@@ -34,4 +38,30 @@ func (pg *PostgresStatusStore) GetStatusbyId(id int64) (*Status, error) {
 	}
 	return status, nil
 }
+
+func (pg *PostgresStatusStore) GetAllStatuses(ctx context.Context) ([]*Status, error) {
+	query := `SELECT id, name FROM statuses ORDER BY id`
+
+	rows, err := pg.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var statuses []*Status
+	for rows.Next() {
+		status := &Status{}
+		if err := rows.Scan(&status.Id, &status.Name); err != nil {
+			return nil, err
+		}
+		statuses = append(statuses, status)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return statuses, nil
+}
+
 

@@ -15,20 +15,20 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 	})
 
 	r.Route("/v1", func(r chi.Router) {
-		// Public
+
 		r.Route("/auth", func(r chi.Router) {
-			r.Post("/register/", app.UserHandler.HandleRegister)            // checked
-			r.Post("/login/", app.TokenHandler.LoginHandler)                // checked
-			r.Post("/reset-password/", app.UserHandler.HandleResetPassword) //checked
+			r.Post("/register/", app.UserHandler.HandleRegister)
+			r.Post("/login/", app.TokenHandler.LoginHandler)
+			r.Post("/reset-password/", app.UserHandler.HandleResetPassword)
 		})
 
-		// Protected
 		r.Group(func(r chi.Router) {
 			r.Use(app.Middleware.Authenticate)
+			r.Get("/statuses", app.StatusHandler.HandleGetAllStatuses)
 
-			r.Get("/projects", app.ProjectHandler.HandleListProjects) // checked
+			r.Get("/projects", app.ProjectHandler.HandleListProjects)
 			r.Patch("/project/{id}/", app.ProjectHandler.HandleUpdateProject)
-			// Work sessions
+
 			r.Route("/work-sessions", func(r chi.Router) {
 				r.Post("/start/", app.WorkSessionHandler.HandleStartSession)
 				r.Patch("/stop/{id}/", app.WorkSessionHandler.HandleStopSession)
@@ -38,12 +38,10 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 
 			r.Patch("/users/{id}/", app.UserHandler.HandleUpdateUser)
 
-			// Admin-only
-			r.Group(func(r chi.Router) {
-				r.Post("/admin/reset-tokens/", app.UserHandler.HandleGenerateResetToken)
-				r.Get("/admin/users/", app.UserHandler.HandleListUsers)
-				r.Post("/projects/", app.ProjectHandler.HandleCreateProject)
-			})
+			r.Post("/admin/reset-tokens/", app.UserHandler.HandleGenerateResetToken)
+			r.Get("/admin/users/", app.UserHandler.HandleListUsers)
+			r.Post("/projects/", app.ProjectHandler.HandleCreateProject)
+
 		})
 	})
 

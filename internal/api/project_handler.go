@@ -15,6 +15,7 @@ type ProjectHandler struct {
 	projectStore store.ProjectStore
 	userStore    store.UserStore
 	logger       *log.Logger
+
 }
 
 func NewProjectHandler(projectStore store.ProjectStore, userStore store.UserStore, logger *log.Logger) *ProjectHandler {
@@ -79,7 +80,7 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 		ProjectName: req.Name,
 	}
 
-	if err := ph.projectStore.CreateProject(pj); err != nil {
+	if err := ph.projectStore.CreateProject(r.Context(), pj); err != nil {
 		ph.logger.Println("error while creating project:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
@@ -92,7 +93,7 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 }
 
 func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Request) {
-	projects, err := ph.projectStore.ListProjects()
+	projects, err := ph.projectStore.ListProjects(r.Context())
 	if err != nil {
 		ph.logger.Println("ListProjects error:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{
@@ -141,3 +142,8 @@ func (ph *ProjectHandler) HandleUpdateProject(w http.ResponseWriter, r *http.Req
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "project updated succesfully"})
 }
+
+
+
+
+

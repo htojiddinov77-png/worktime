@@ -120,7 +120,6 @@ type WorkSessionStore interface {
 	StartSession(ctx context.Context, ws *WorkSession) error
 	StopSession(ctx context.Context, sessionID int64, userID int64) error
 	GetSummaryReport(ctx context.Context, filter SummaryRangeFilter) (*SummaryReport, error)
-
 	ListSessions(ctx context.Context, filter WorkSessionFilter) ([]WorkSessionRow, int, error)
 }
 

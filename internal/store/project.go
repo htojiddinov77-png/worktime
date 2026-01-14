@@ -32,19 +32,19 @@ type Project struct {
 }
 
 type ProjectStore interface {
-	CreateProject(*Project) error
-	ListProjects() ([]ProjectRow, error)
+	CreateProject(ctx context.Context, project *Project) error
+	ListProjects(ctx context.Context) ([]ProjectRow, error)
 	UpdateProject(ctx context.Context, id int64) error
 	DeleteProject(ctx context.Context, id int64) error
 }
 
-func (pg PostgresProjectStore) CreateProject(project *Project) error {
+func (pg PostgresProjectStore) CreateProject(ctx context.Context, project *Project) error {
 	query := `
 	INSERT into projects (name, status_id)
 	VALUES($1, $2)
 	RETURNING id`
 
-	err := pg.db.QueryRow(query, project.ProjectName, project.StatusId).Scan(&project.ProjectId)
+	err := pg.db.QueryRowContext(ctx, query, project.ProjectName, project.StatusId).Scan(&project.ProjectId)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func (pg PostgresProjectStore) CreateProject(project *Project) error {
 	return nil
 }
 
-func (pg *PostgresProjectStore) ListProjects() ([]ProjectRow, error) {
+func (pg *PostgresProjectStore) ListProjects(ctx context.Context) ([]ProjectRow, error) {
 	query := `
 		SELECT
 			p.id,
@@ -64,7 +64,7 @@ func (pg *PostgresProjectStore) ListProjects() ([]ProjectRow, error) {
 		ORDER BY p.name ASC, p.id ASC
 	`
 
-	rows, err := pg.db.Query(query)
+	rows, err := pg.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

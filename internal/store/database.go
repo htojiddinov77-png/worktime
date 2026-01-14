@@ -31,7 +31,7 @@ func Open() (*sql.DB, error) {
 	fmt.Println("Connected to database....")
 	return db, nil
 }
- // running migrations inside a compiled binary
+
 func MigrateFs(db *sql.DB, migrationsFS fs.FS, dir string) error {
 	goose.SetBaseFS(migrationsFS)
 	defer func() {

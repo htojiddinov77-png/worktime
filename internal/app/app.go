@@ -19,6 +19,7 @@ type Application struct {
 	WorkSessionHandler *api.WorkSessionHandler
 	TokenHandler       *api.TokenHandler
 	ProjectHandler     *api.ProjectHandler
+	StatusHandler      *api.StatusHandler
 
 	Middleware *middleware.Middleware
 	JWT        *auth.JWTManager
@@ -36,6 +37,7 @@ func NewApplication() (*Application, error) {
 	userStore := store.NewPostgresUserStore(pgDB)
 	workSessionStore := store.NewPostgresWorkSessionStore(pgDB)
 	projectStore := store.NewPostgresProjectStore(pgDB)
+	statusStore := store.NewPostgresStatusStore(pgDB)
 
 	// JWT manager (auth package)
 	jwtManager := auth.NewJWTManager()
@@ -45,6 +47,7 @@ func NewApplication() (*Application, error) {
 	projectHandler := api.NewProjectHandler(projectStore, userStore, logger)
 	workSessionHandler := api.NewWorkSessionHandler(workSessionStore, userStore, logger, middleware.Middleware{JWT: jwtManager})
 	tokenHandler := api.NewTokenHandler(userStore, jwtManager, logger)
+	statusHandler := api.NewStatusHandler(statusStore)
 
 	// Middleware (depends on auth only)
 	mw := &middleware.Middleware{JWT: jwtManager}
@@ -55,6 +58,7 @@ func NewApplication() (*Application, error) {
 		UserHandler:        userHandler,
 		WorkSessionHandler: workSessionHandler,
 		ProjectHandler:     projectHandler,
+		StatusHandler:      statusHandler,
 		TokenHandler:       tokenHandler,
 		Middleware:         mw,
 		JWT:                jwtManager,

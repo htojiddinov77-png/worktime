@@ -352,6 +352,8 @@ func (pg *PostgresWorkSessionStore) GetSummaryReport(ctx context.Context, filter
 	return report, nil
 }
 
+
+// aggregates sessions per user
 func (pg *PostgresWorkSessionStore) getUserSummaries(ctx context.Context, whereClause string, args []interface{}) ([]UserSummary, error) {
 	query := fmt.Sprintf(`
 		SELECT 
@@ -402,7 +404,7 @@ func (pg *PostgresWorkSessionStore) getUserSummaries(ctx context.Context, whereC
 
 	return users, rows.Err()
 }
-
+// aggregates sessions per project, but only for one user
 func (pg *PostgresWorkSessionStore) getProjectsForUser(ctx context.Context, userID int64, whereClause string, args []interface{}) ([]ProjectSummary, error) {
 	query := fmt.Sprintf(`
 	SELECT 
@@ -451,7 +453,6 @@ func (pg *PostgresWorkSessionStore) getProjectsForUser(ctx context.Context, user
 
 	return projects, rows.Err()
 }
-
 
 func formatDuration(seconds float64) string {
 	totalSeconds := int64(seconds)

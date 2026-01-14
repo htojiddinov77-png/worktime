@@ -1,3 +1,329 @@
+# Worktime API
+
+## Overview
+
+This document describes the REST surface implemented in this repository (routes are defined in `internal/router/routes.go`). It lists endpoints, required auth levels, query parameters, request bodies, one success response example per endpoint, and common error cases. Conventions (response envelope, error format, pagination) are in the "Global conventions" section.
+
+## Auth
+
+- How to send token: set header `Authorization: Bearer <token>`.
+- Token creation: `/v1/auth/login/` returns a signed JWT (HS256).
+- Claims available (from `internal/auth/jwt.go`):
+  - `user_id` (int64)
+  - `email` (string)
+  - `role` (string) — expected values: `"user"` or `"admin"`
+  - `exp` (expiry unix timestamp)
+- Reset tokens: short-lived JWTs created via admin endpoint `/v1/admin/reset-tokens/` and parsed with `ParseResetToken`.
+
+## Global conventions
+
+- Envelope: all responses are JSON objects via `utils.WriteJson`. Typical success envelopes use keys like `user`, `token`, `result`, `metadata`, `report`, `session`, `projects`.
+- Errors: error responses are an envelope containing `"error": "<message>"`.
+- Pagination & sorting:
+  - Common query params: `page` (int, default 1), `page_size` (int, default 50), `sort` (string).
+  - Metadata structure:
+
+    ```json
+    {
+      "metadata": { "current_page": 1, "page_size": 50, "first_page": 1, "last_page": 1, "total_records": 10 }
+    }
+    ```
+
+  - Sort safe-lists are enforced per-handler (example: users allow `id,email,name`). Prefix `-` indicates descending.
+
+---
+
+## Endpoints
+
+All endpoints are mounted under `/v1`.
+
+### Health
+- Method + Path: `GET /health`
+- Auth: none
+- Query params: none
+- Request body: none
+- Success example: HTTP 200 (empty body)
+- Common errors: none
+
+---
+
+## Auth
+
+### Register
+- Method + Path: `POST /v1/auth/register/`
+- Auth: none
+- Query params: none
+- Request body (JSON):
+  - `name` (string) — required
+  - `email` (string) — required, valid email
+  - `password` (string) — required
+- Success example (HTTP 201):
+
+  ```json
+  { "user": { "id": 123, "name": "Alice", "email": "a@example.com", "role": "user", "is_active": true, "created_at": "..." } }
+  ```
+- Common errors:
+  - `invalid request payload`
+  - `invalid email`
+  - `Email is already exists`
+  - `internal server error`
+
+### Login
+- Method + Path: `POST /v1/auth/login/`
+- Auth: none
+- Query params: none
+- Request body (JSON):
+  - `email` (string) — required
+  - `password` (string) — required
+- Success example (HTTP 200):
+
+  ```json
+  { "token": "<jwt>", "name": "Alice", "role": "user" }
+  ```
+- Common errors:
+  - `invalid request payload`
+  - `unauthorized`, `user is inactive`, `password is incorrect`
+  - `internal server error`
+
+### Reset Password (use reset token)
+- Method + Path: `POST /v1/auth/reset-password/`
+- Auth: none (uses reset token in body)
+- Query params: none
+- Request body (JSON):
+  - `token` (string) — required
+  - `new_password` (string) — required
+  - `confirm_password` (string) — required (must match)
+- Success example (HTTP 200):
+
+  ```json
+  { "message": "password updated" }
+  ```
+- Common errors:
+  - `invalid JSON body`
+  - `token is required` / `invalid or expired token`
+  - `password fields are required` / `passwords do not match`
+  - `invalid token user` / `token doesn't match`
+  - `internal server error`
+
+---
+
+## Users
+
+### Update user
+- Method + Path: `PATCH /v1/users/{id}/`
+- Auth: authenticated user or admin
+  - regular users may update their own record; admin may update any user and change `role` or `is_active`.
+- Query params: none
+- Request body (JSON) — all fields optional; at least one required:
+  - `name` (*string) — optional
+  - `email` (*string) — optional
+  - `old_password` (*string) — optional (for password change)
+  - `new_password` (*string) — optional
+  - `role` (*string) — optional, admin-only (`user` or `admin`)
+  - `is_active` (*bool) — optional, admin-only
+- Success example (HTTP 200):
+
+  ```json
+  { "user": { "id": 12, "name": "Bob", "email": "b@example.com", "role": "user", "is_active": true } }
+  ```
+- Common errors:
+  - `invalid id`, `unauthorized`, `forbidden`, `user not found`
+  - `invalid request payload`, `email already exists`, `name cannot be empty`
+  - `old password is incorrect`, `new password cannot be empty`
+  - `internal server error`
+
+### List users (admin)
+- Method + Path: `GET /v1/admin/users/`
+- Auth: admin
+- Query params:
+  - `search` (string) — search on email/name
+  - `page` (int) — page number (default 1)
+  - `page_size` (int) — page size (default 50)
+  - `sort` (string) — safe: `id`, `email`, `name` (prefix `-` for DESC)
+  - `is_active` (bool)
+  - `is_locked` (bool)
+- Request body: none
+- Success example (HTTP 200):
+
+  ```json
+  { "result": [ { "id":1, "email":"a@x", "name":"A", "role":"user", "is_active": true } ], "metadata": { "current_page":1, "page_size":50 } }
+  ```
+- Common errors:
+  - `unauthorized`
+  - `bad request` (invalid boolean)
+  - `internal server error`
+
+### Generate Reset Token (admin)
+- Method + Path: `POST /v1/admin/reset-tokens/`
+- Auth: admin
+- Query params: none
+- Request body (JSON):
+  - `email` (string) — required
+- Success example (HTTP 200):
+
+  ```json
+  { "reset_token": "<token>", "expires_at": "2026-01-14T15:04:05Z" }
+  ```
+- Common errors:
+  - `unauthorized`, `invalid JSON body`, `email is required`, `user not found`, `internal server error`
+
+---
+
+## Projects
+
+### List projects
+- Method + Path: `GET /v1/projects`
+- Auth: none required (handler allows anonymous access)
+- Query params: none
+- Request body: none
+- Success example (HTTP 200):
+
+  ```json
+  { "count": 2, "projects": [ { "id":1, "name":"Alpha", "status": { "id":1, "name":"active" } } ] }
+  ```
+- Common errors:
+  - `internal server error`
+
+### Create project (admin)
+- Method + Path: `POST /v1/projects/`
+- Auth: admin
+- Query params: none
+- Request body (JSON):
+  - `name` (string) — required
+  - `status_id` (int) — required, positive
+- Success example (HTTP 201):
+
+  ```json
+  { "message": "project created successfully", "project": { "project_id": 7, "project_name": "X", "status_id": 2 } }
+  ```
+- Common errors:
+  - `unauthorized`, `forbidden`, `invalid JSON body`, `name can't be empty`, `status_id must be positive`, `internal server error`
+
+### Update project (admin)
+- Method + Path: `PATCH /v1/project/{id}/`
+- Auth: admin
+- Query params: none
+- Request body (JSON) — at least one required:
+  - `name` (*string) — optional
+  - `status_id` (*int) — optional (must be positive if provided)
+- Success example (HTTP 200):
+
+  ```json
+  { "message": "project updated successfully" }
+  ```
+- Common errors:
+  - `unauthorized`, `invalid id`, `invalid request payload`, `status_id must be positive`, `internal server error`
+
+---
+
+## Work sessions & Reports
+
+Notes: time parsing for report accepts RFC3339 or `YYYY-MM-DD` (plain date is normalized to UTC midnight).
+
+### Start session
+- Method + Path: `POST /v1/work-sessions/start/`
+- Auth: authenticated user
+- Query params: none
+- Request body (JSON):
+  - `project_id` (int64) — required, positive
+  - `note` (string) — optional
+- Success example (HTTP 201):
+
+  ```json
+  { "session": { "id":10, "user_id":5, "project_id":2, "start_at":"2026-01-14T10:00:00Z", "end_at":null, "note":"Focus work", "created_at":"..." }, "status":"active" }
+  ```
+- Common errors:
+  - `invalid JSON body`, `project_id must be positive`, `Unauthorized`, `you already have one active session.Stop it before starting a new sessions`, `internal server error`
+
+### Stop session
+- Method + Path: `PATCH /v1/work-sessions/stop/{id}/`
+- Auth: authenticated user
+- Query params: none
+- Request body: none
+- Success example (HTTP 200):
+
+  ```json
+  { "message": "session stopped", "session_id": 10 }
+  ```
+- Common errors:
+  - `invalid id`, `Unauthorized`, `no active session` (404), `internal server error`
+
+### List sessions
+- Method + Path: `GET /v1/work-sessions/list/`
+- Auth: authenticated user (admin may supply `user_id`)
+- Query params:
+  - `page` (int)
+  - `page_size` (int)
+  - `search` (string) — searches project name, user name, user email, or note
+  - `active` (bool) — filter by active/finished
+  - `project_id` (int64)
+  - `user_id` (int64) — admin-only
+- Request body: none
+- Success example (HTTP 200):
+
+  ```json
+  {
+    "result": [
+      {
+        "user": { "user_id":5, "name":"Alice", "email":"a@x", "is_active": true },
+        "project": { "id":2, "name":"Alpha", "status": { "id":1, "name":"active" } },
+        "sessions": { "id":10, "start_at":"2026-01-14T10:00:00Z", "end_at":null, "note":"...", "created_at":"..." },
+        "status": "active"
+      }
+    ],
+    "metadata": { "current_page":1, "page_size":50, "first_page":1, "last_page":1, "total_records":1 }
+  }
+  ```
+- Common errors:
+  - `unauthorized`, `active must be true or false`, `invalid project_id`, `invalid user_id`, `invalid page/page_size/sort`, `internal server error`
+
+### Summary report
+- Method + Path: `GET /v1/work-sessions/reports/`
+- Auth: authenticated user (admin may request for other users)
+- Query params:
+  - `from` (string, date/time) — required; RFC3339 or `YYYY-MM-DD`
+  - `to` (string, date/time) — required; RFC3339 or `YYYY-MM-DD`
+  - `project_id` (int64) — optional
+  - `user_id` (int64) — optional, admin-only
+- Request body: none
+- Success example (HTTP 200):
+
+  ```json
+  { "report": { "from":"2026-01-01", "to":"2026-01-07", "filters": { "user_id":5, "project_id":2 }, "overall": { "total_sessions":12, "total_durations":"0 days, 08:30:00" }, "users":[ /* ... */ ], "projects": [ /* ... */ ] } }
+  ```
+- Common errors:
+  - `unauthorized`, `from and to are required`, `invalid from` / `invalid to`, `invalid project_id`, `invalid user_id`, `internal server error`
+
+---
+
+## RBAC table
+
+| Endpoint | user | admin |
+|---|---:|---:|
+| GET /health | Y | Y |
+| POST /v1/auth/register/ | Y | Y |
+| POST /v1/auth/login/ | Y | Y |
+| POST /v1/auth/reset-password/ | Y | Y |
+| PATCH /v1/users/{id}/ | Y (self) | Y (any) |
+| GET /v1/admin/users/ | N | Y |
+| POST /v1/admin/reset-tokens/ | N | Y |
+| GET /v1/projects | Y/anonymous | Y |
+| POST /v1/projects/ | N | Y |
+| PATCH /v1/project/{id}/ | N | Y |
+| POST /v1/work-sessions/start/ | Y | Y |
+| PATCH /v1/work-sessions/stop/{id}/ | Y | Y |
+| GET /v1/work-sessions/list/ | Y (own) | Y (can specify `user_id`) |
+| GET /v1/work-sessions/reports/ | Y (own only) | Y (can request other users) |
+
+---
+
+## Known limitations / notes
+- The authentication middleware sets an anonymous user when `Authorization` is missing; handlers enforce access checks.
+- Login tokens expire after 24h (hard-coded). Reset tokens are short-lived (10 minutes in `HandleGenerateResetToken`).
+- Date input for reports accepts RFC3339 or `YYYY-MM-DD` (normalized to UTC midnight).
+- Error responses contain string messages only; there are no numeric error codes.
+
+If you want, I can also generate an OpenAPI draft or adjust response schemas.
 # Worktime API Documentation
 
 This document is a precise API reference derived directly from the repository source code. It describes only behavior implemented in the codebase — no behavior is invented.

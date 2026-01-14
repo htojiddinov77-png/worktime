@@ -115,12 +115,12 @@ func (pg *PostgresUserStore) GetUserById(ctx context.Context,id int64) (*User, e
 		WHERE id = $1
 	`
 
-	var pwHash string
+
 	err := pg.db.QueryRowContext(ctx,query, id).Scan(
 		&user.Id,
 		&user.Name,
 		&user.Email,
-		&pwHash,
+		&user.PasswordHash.hash,
 		&user.Role,
 		&user.IsActive,
 		&user.CreatedAt,
@@ -171,7 +171,7 @@ func (pg *PostgresUserStore) UpdateUser(ctx context.Context,user *User) error {
 		SET
 			name = $1,
 			email = $2,
-			password_hash = $3,
+			password_hash = COALESCE($3, password_hash),
 			role = $4,
 			is_active = $5,
 			updated_at = NOW()

@@ -343,7 +343,7 @@ func (pg *PostgresWorkSessionStore) GetSummaryReport(ctx context.Context, filter
 		TotalDurations: formatDuration(totalSeconds),
 	}
 
-	// ✅ Always user-first
+	
 	users, err := pg.getUserSummaries(ctx, whereClause, args)
 	if err != nil {
 		return nil, err
@@ -437,7 +437,7 @@ func (pg *PostgresWorkSessionStore) getProjectsForUser(ctx context.Context, user
 		err := rows.Scan(
 			&project.ProjectID,
 			&project.ProjectName,
-			&project.Status, // ✅ now filled
+			&project.Status, 
 			&project.TotalSessions,
 			&totalSeconds,
 		)

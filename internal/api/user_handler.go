@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"log"
+
 	"net/http"
 	"regexp"
 	"strings"
@@ -51,7 +52,7 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existingUser, err := uh.userStore.GetUserByEmail(r.Context(),req.Email)
+	existingUser, err := uh.userStore.GetUserByEmail(r.Context(), req.Email)
 	if err != nil {
 		uh.logger.Println("Error while getting user:")
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
@@ -86,8 +87,6 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 
 }
 
-
-
 func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	// 1) target id from URL
 	targetUserId, err := utils.ReadIdParam(r)
@@ -96,27 +95,23 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-
 	authUser := middleware.GetUser(r)
 	if authUser == nil || authUser.Id <= 0 {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
 
-	
 	isAdmin := false
 	if authUser.Role == "admin" {
 		isAdmin = true
 	}
 
-	
 	if !isAdmin && targetUserId != authUser.Id {
 		utils.WriteJson(w, http.StatusForbidden, utils.Envelope{"error": "forbidden"})
 		return
 	}
 
-
-	existingUser, err := uh.userStore.GetUserById(r.Context(),targetUserId)
+	existingUser, err := uh.userStore.GetUserById(r.Context(), targetUserId)
 	if err != nil {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
@@ -127,10 +122,12 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req struct {
-		Name     *string `json:"name"`
-		Email    *string `json:"email"`
-		Role     *string `json:"role"`      // admin-only
-		IsActive *bool   `json:"is_active"` // admin-only
+		Name        *string `json:"name"`
+		Email       *string `json:"email"`
+		OldPassword *string `json:"old_password"`
+		NewPassword *string `json:"new_password"`
+		Role        *string `json:"role"`      // admin-only
+		IsActive    *bool   `json:"is_active"` // admin-only
 	}
 
 	dec := json.NewDecoder(r.Body)
@@ -141,19 +138,15 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	
 	if !isAdmin && (req.Role != nil || req.IsActive != nil) {
 		utils.WriteJson(w, http.StatusForbidden, utils.Envelope{"error": "forbidden"})
 		return
 	}
 
-	
-	if req.Name == nil && req.Email == nil && req.Role == nil && req.IsActive == nil {
+	if req.Name == nil && req.Email == nil && req.Role == nil && req.IsActive == nil && req.OldPassword == nil && req.NewPassword == nil {
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "no fields to update"})
 		return
 	}
-
-	
 
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
@@ -177,7 +170,7 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		userByEmail, err := uh.userStore.GetUserByEmail(r.Context(),email)
+		userByEmail, err := uh.userStore.GetUserByEmail(r.Context(), email)
 		if err != nil {
 			uh.logger.Println("Error getting user by email:", err)
 			utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
@@ -204,7 +197,31 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 		existingUser.IsActive = *req.IsActive
 	}
 
-	// 10) save
+	if req.OldPassword != nil && req.NewPassword != nil {
+		matches, err := existingUser.PasswordHash.Matches(*req.OldPassword)
+		if err != nil {
+			uh.logger.Println("error while matching password", err)
+			utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+			return
+		}
+
+		if !matches {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "old password is incorrect"})
+			return
+		}
+		if *req.NewPassword == "" {
+			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "new password cannot be empty"})
+			return
+		}
+		err = existingUser.PasswordHash.Set(*req.NewPassword)
+		if err != nil {
+			uh.logger.Println("error while setting new password", err)
+			utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error:": "internal server error"})
+			return
+		}
+	}
+
+	
 	if err := uh.userStore.UpdateUser(r.Context(), existingUser); err != nil {
 		uh.logger.Println("Error updating user:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
@@ -214,14 +231,11 @@ func (uh *UserHandler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{"user": existingUser})
 }
 
-
-
-
-func (uh *UserHandler) HandleListUsers(w http.ResponseWriter, r *http.Request){
+func (uh *UserHandler) HandleListUsers(w http.ResponseWriter, r *http.Request) {
 	var input store.ListUserInput
 
 	user := middleware.GetUser(r)
-	if user == nil || user.Role != "admin"{
+	if user == nil || user.Role != "admin" {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
 	}
@@ -290,7 +304,7 @@ func (uh *UserHandler) HandleGenerateResetToken(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	user, err := uh.userStore.GetUserByEmail(r.Context(),input.Email)
+	user, err := uh.userStore.GetUserByEmail(r.Context(), input.Email)
 	if err != nil {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
@@ -360,7 +374,7 @@ func (uh *UserHandler) HandleResetPassword(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	user, err := uh.userStore.GetUserById(r.Context(),claims.UserID)
+	user, err := uh.userStore.GetUserById(r.Context(), claims.UserID)
 	if err != nil {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
@@ -388,4 +402,3 @@ func (uh *UserHandler) HandleResetPassword(w http.ResponseWriter, r *http.Reques
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "password updated"})
 }
-

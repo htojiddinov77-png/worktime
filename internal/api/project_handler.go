@@ -18,13 +18,12 @@ type ProjectHandler struct {
 }
 
 func NewProjectHandler(projectStore store.ProjectStore, userStore store.UserStore, logger *log.Logger) *ProjectHandler {
-    return &ProjectHandler{
-        projectStore: projectStore,
-        userStore:    userStore,
-        logger:       logger,
-    }
+	return &ProjectHandler{
+		projectStore: projectStore,
+		userStore:    userStore,
+		logger:       logger,
+	}
 }
-
 
 func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Request) {
 	type projectRequest struct {
@@ -60,7 +59,7 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	user, err := ph.userStore.GetUserById(r.Context(),u.Id)
+	user, err := ph.userStore.GetUserById(r.Context(), u.Id)
 	if err != nil {
 		ph.logger.Println("error while getting user by id:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
@@ -75,10 +74,9 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 		utils.WriteJson(w, http.StatusForbidden, utils.Envelope{"error": "only admin can create a project"})
 		return
 	}
-	
 
 	pj := &store.Project{
-		ProjectName:     req.Name,
+		ProjectName: req.Name,
 	}
 
 	if err := ph.projectStore.CreateProject(pj); err != nil {
@@ -92,8 +90,6 @@ func (ph *ProjectHandler) HandleCreateProject(w http.ResponseWriter, r *http.Req
 		"project": pj,
 	})
 }
-
-
 
 func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Request) {
 	projects, err := ph.projectStore.ListProjects()
@@ -111,10 +107,23 @@ func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-func(ph *ProjectHandler) HandleUpdateProject(w http.ResponseWriter, r *http.Request) {
+func (ph *ProjectHandler) HandleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
 	if user == nil || user.Role != "admin" {
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error":"unauthorized"})
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		return
+	}
+
+	var req struct {
+		Name     string `json:"name"`
+		StatusId int64  `json:"status_id"`
+	}
+
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	if err := dec.Decode(&req); err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid request payload"})
 		return
 	}
 
@@ -132,29 +141,3 @@ func(ph *ProjectHandler) HandleUpdateProject(w http.ResponseWriter, r *http.Requ
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "project updated succesfully"})
 }
-
-func (ph *ProjectHandler) HandleDeleteProject(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r)
-	if user == nil || user.Role != "admin" {
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unaunthorized"})
-		return
-	}
-
-	projectId, err := utils.ReadIdParam(r)
-	if err != nil {
-		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid id"})
-		return
-	}
-	
-	err = ph.projectStore.DeleteProject(r.Context(),projectId)
-	if err != nil {
-		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
-		return
-	}
-
-	utils.WriteJson(w, http.StatusOK, utils.Envelope{"error": "project deleted successfully"})
-}
-
-
-
-

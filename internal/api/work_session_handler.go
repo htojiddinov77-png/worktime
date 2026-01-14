@@ -240,7 +240,7 @@ func (wh *WorkSessionHandler) HandleGetSummaryReport(w http.ResponseWriter, r *h
 		return
 	}
 
-	fromDate, err := parseTimeParam(fromStr) // your helper supports YYYY-MM-DD
+	fromDate, err := parseTimeParam(fromStr) //  helper supports YYYY-MM-DD
 	if err != nil {
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid from"})
 		return
@@ -274,7 +274,7 @@ func (wh *WorkSessionHandler) HandleGetSummaryReport(w http.ResponseWriter, r *h
 		requestedUserID = &v
 	}
 
-	// 5) Decide which user_id we actually allow for the report
+	// 5)  which user_id i actually allow for the report
 	var allowedUserID *int64
 	if isAdmin {
 		// admin:

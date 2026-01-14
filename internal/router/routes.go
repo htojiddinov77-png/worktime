@@ -27,7 +27,7 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 			r.Use(app.Middleware.Authenticate)
 
 			r.Get("/projects", app.ProjectHandler.HandleListProjects) // checked
-
+			r.Patch("/project/{id}/", app.ProjectHandler.HandleUpdateProject)
 			// Work sessions
 			r.Route("/work-sessions", func(r chi.Router) {
 				r.Post("/start/", app.WorkSessionHandler.HandleStartSession)

@@ -81,6 +81,7 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		uh.logger.Println("Error: while creating user")
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
 	}
 
 	utils.WriteJson(w, http.StatusCreated, utils.Envelope{"user": user})
@@ -385,16 +386,11 @@ func (uh *UserHandler) HandleResetPassword(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// extra safety: token email must match DB email
 	if !strings.EqualFold(user.Email, claims.Email) {
     utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "token doesn't match"})
     return
 }
 
-	if err := user.PasswordHash.Set(input.NewPassword); err != nil {
-		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
-		return
-	}
 
 	if err := uh.userStore.UpdatePasswordPlain(user.Id, input.NewPassword); err != nil {
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})

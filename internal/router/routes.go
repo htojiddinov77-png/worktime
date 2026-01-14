@@ -1,7 +1,6 @@
 package router
 
 import (
-	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/htojiddinov77-png/worktime/internal/app"
@@ -10,10 +9,6 @@ import (
 func SetUpRoutes(app *app.Application) *chi.Mux {
 	r := chi.NewRouter()
 
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
 	r.Route("/v1", func(r chi.Router) {
 
 		r.Route("/auth", func(r chi.Router) {
@@ -21,11 +16,10 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 			r.Post("/login/", app.TokenHandler.LoginHandler)
 			r.Post("/reset-password/", app.UserHandler.HandleResetPassword)
 		})
-
+		
 		r.Group(func(r chi.Router) {
 			r.Use(app.Middleware.Authenticate)
 			r.Get("/statuses", app.StatusHandler.HandleGetAllStatuses)
-
 			r.Get("/projects", app.ProjectHandler.HandleListProjects)
 			r.Patch("/project/{id}/", app.ProjectHandler.HandleUpdateProject)
 
@@ -37,7 +31,6 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 			})
 
 			r.Patch("/users/{id}/", app.UserHandler.HandleUpdateUser)
-
 			r.Post("/admin/reset-tokens/", app.UserHandler.HandleGenerateResetToken)
 			r.Get("/admin/users/", app.UserHandler.HandleListUsers)
 			r.Post("/projects/", app.ProjectHandler.HandleCreateProject)

@@ -22,12 +22,7 @@ type WorkSessionHandler struct {
 	Middleware       middleware.Middleware
 }
 
-func NewWorkSessionHandler(
-	workSessionStore store.WorkSessionStore,
-	userStore store.UserStore,
-	logger *log.Logger,
-	middleware middleware.Middleware,
-) *WorkSessionHandler {
+func NewWorkSessionHandler(workSessionStore store.WorkSessionStore,userStore store.UserStore,logger *log.Logger,middleware middleware.Middleware) *WorkSessionHandler {
 	return &WorkSessionHandler{
 		workSessionStore: workSessionStore,
 		userStore:        userStore,
@@ -252,7 +247,7 @@ func (wh *WorkSessionHandler) HandleGetSummaryReport(w http.ResponseWriter, r *h
 		return
 	}
 
-	// 3) Optional project_id
+	//  Optional project_id
 	var requestedProjectID *int64
 	if s := strings.TrimSpace(q.Get("project_id")); s != "" {
 		v, err := strconv.ParseInt(s, 10, 64)
@@ -263,7 +258,7 @@ func (wh *WorkSessionHandler) HandleGetSummaryReport(w http.ResponseWriter, r *h
 		requestedProjectID = &v
 	}
 
-	// 4) Optional user_id (admin only)
+	//  Optional user_id (admin only)
 	var requestedUserID *int64
 	if s := strings.TrimSpace(q.Get("user_id")); s != "" {
 		v, err := strconv.ParseInt(s, 10, 64)

@@ -40,7 +40,7 @@ func main() {
 
 	allowed := map[string]bool{
 		"http://localhost:5173": true,
-		"http://localhost:3000": true,
+		"http://localhost:4000": true,
 	}
 	handler := middleware.CORS(allowed)(routes)
 

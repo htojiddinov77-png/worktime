@@ -5,13 +5,13 @@ This Go service provides the backend APIs for the Worktime frontend. It runs on 
 Frontend needs:
 - Base URL: `http://localhost:4000` (default)
 - Port: `4000` by default, override with `WORKTIME_PORT` or `-port`
-- CORS allowed origins: `http://localhost:5173`, `http://localhost:4000`
+- CORS allowed origins: `http://localhost:5173`, `http://localhost:3000`
 - Auth: JWT in header `Authorization: Bearer <token>`
 
 ## Prerequisites
 - Go `1.24.5` (from `go.mod`)
 - Local PostgreSQL (running and reachable)
-- Goose CLI (for migrations):
+- Goose CLI (for migrations). `make` will install it automatically, but the manual command is:
   ```bash
   go install github.com/pressly/goose/v3/cmd/goose@v3.26.0
   ```
@@ -23,15 +23,14 @@ cd worktime
 
 cp .env.example .env
 
-createdb worktime
-
-set -a
-source .env
-set +a
-goose -dir migrations postgres "$WORKTIME_DB_DSN" up
-
-go run .
+make db
+make run
 ```
+
+Step-by-step (what each command does):
+1) `cp .env.example .env` - creates your local env file. Fill in `WORKTIME_DB_DSN` and `WORKTIME_JWT_SECRET`.
+2) `make db` - creates the local `worktime` database in PostgreSQL.
+3) `make run` - downloads Go deps, installs Goose if missing, runs migrations, then starts the API on port `4000`.
 
 ## Environment variables
 Only the variables below are read by the app:
@@ -42,11 +41,11 @@ Only the variables below are read by the app:
 ## Database setup
 - Create DB (example):
   ```bash
-  createdb worktime
+  make db
   ```
 - Run migrations (uses `WORKTIME_DB_DSN`):
   ```bash
-  goose -dir migrations postgres "$WORKTIME_DB_DSN" up
+  make migrate
   ```
 - Migrations live in `migrations/`
 

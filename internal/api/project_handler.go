@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -102,6 +103,10 @@ func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	for i := range projects {
+		projects[i].TotalDurations = formatDuration((projects[i].TotalSeconds))
+	}
+
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
 		"count":    len(projects),
 		"projects": projects,
@@ -109,7 +114,7 @@ func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Requ
 }
 
 func (ph *ProjectHandler) HandleUpdateProject(w http.ResponseWriter, r *http.Request) {
-	user , ok := middleware.GetUser(r)
+	user, ok := middleware.GetUser(r)
 	if !ok || user == nil || user.Role != "admin" {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
@@ -133,17 +138,15 @@ func (ph *ProjectHandler) HandleUpdateProject(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	
 	if req.Name != nil {
 		n := strings.TrimSpace(*req.Name)
 		if n == "" {
 			utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "name cannot be empty"})
 			return
 		}
-		req.Name = &n 
+		req.Name = &n
 	}
 
-	
 	if req.StatusId != nil && *req.StatusId <= 0 {
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "status_id must be positive"})
 		return
@@ -163,4 +166,13 @@ func (ph *ProjectHandler) HandleUpdateProject(w http.ResponseWriter, r *http.Req
 	}
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{"message": "project updated successfully"})
+}
+
+func formatDuration(totalSeconds int64) string {
+	//days := totalSeconds / 86400
+	//hours := (totalSeconds % 86400) / 3600
+	minutes := totalSeconds / 60
+	//secs := totalSeconds % 60
+
+	return fmt.Sprintf("%02d minutes", minutes)
 }

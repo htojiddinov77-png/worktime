@@ -368,9 +368,7 @@ func (pg *PostgresWorkSessionStore) getUserSummaries(ctx context.Context, whereC
 			u.is_active,
 			COUNT(ws.id) AS total_sessions,
 			COALESCE(
-				SUM(EXTRACT(EPOCH FROM (COALESCE(ws.end_at, NOW()) - ws.start_at))),
-				0
-			) AS total_seconds
+				SUM(EXTRACT(EPOCH FROM (COALESCE(ws.end_at, NOW()) - ws.start_at))),0) AS total_seconds
 		FROM users u
 		INNER JOIN work_sessions ws ON ws.user_id = u.id
 		%s

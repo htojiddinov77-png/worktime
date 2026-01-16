@@ -22,7 +22,11 @@ type ProjectRow struct {
 	Id     int64         `json:"id"`
 	Name   string        `json:"name"`
 	Status ProjectStatus `json:"status"`
+
+	TotalSeconds   int64  `json:"-"`             
+	TotalDurations string `json:"total_durations"` 
 }
+
 
 type Project struct {
 	ProjectId   int64  `json:"project_id"`
@@ -54,11 +58,17 @@ func (pg *PostgresProjectStore) ListProjects(ctx context.Context) ([]ProjectRow,
 	query := `
 		SELECT
 			p.id,
-			COALESCE(p.name, '') AS name,
+			p.name AS name,
 			s.id,
-			s.name
+			s.name,
+			COALESCE(
+				SUM(EXTRACT(EPOCH FROM (ws.end_at - ws.start_at))),0)::bigint AS total_seconds
 		FROM projects p
 		JOIN statuses s ON p.status_id = s.id
+		LEFT JOIN work_sessions ws
+			ON ws.project_id = p.id
+			AND ws.end_at IS NOT NULL
+		GROUP BY p.id, p.name, s.id, s.name
 		ORDER BY p.name ASC, p.id ASC
 	`
 
@@ -77,6 +87,7 @@ func (pg *PostgresProjectStore) ListProjects(ctx context.Context) ([]ProjectRow,
 			&p.Name,
 			&p.Status.Id,
 			&p.Status.Name,
+			&p.TotalSeconds,
 		)
 		if err != nil {
 			return nil, err
@@ -90,6 +101,8 @@ func (pg *PostgresProjectStore) ListProjects(ctx context.Context) ([]ProjectRow,
 
 	return out, nil
 }
+
+
 
 func (pg *PostgresProjectStore) UpdateProject(ctx context.Context, id int64, name *string, statusID *int64) error {
 	query := `
@@ -105,7 +118,6 @@ func (pg *PostgresProjectStore) UpdateProject(ctx context.Context, id int64, nam
 		return err
 	}
 
-	
 	rows, err := res.RowsAffected()
 	if err == nil && rows == 0 {
 		return sql.ErrNoRows
@@ -115,4 +127,3 @@ func (pg *PostgresProjectStore) UpdateProject(ctx context.Context, id int64, nam
 	}
 	return nil
 }
-

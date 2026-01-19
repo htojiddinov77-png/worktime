@@ -66,7 +66,7 @@ func (uh *UserHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 
 	user := &store.User{
 		Name:     req.Name,
-		Email:    req.Email,
+		Email:    strings.ToLower(req.Email),
 		IsActive: true,
 	}
 

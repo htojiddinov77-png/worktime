@@ -4,7 +4,7 @@
 Worktime is a time tracking API with user authentication, projects, statuses, and work sessions.
 
 ## Base URL
-`{BASE_URL}/v1`
+`http://localhost:4000/v1/`
 
 ## Table of Contents
 - Authentication

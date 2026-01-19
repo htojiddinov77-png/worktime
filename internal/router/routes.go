@@ -14,7 +14,7 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/register/", app.UserHandler.HandleRegister)
 			r.Post("/login/", app.TokenHandler.LoginHandler)
-			r.Post("/reset-password/", app.UserHandler.HandleResetPassword)
+			r.Post("/reset-password/{token}", app.ResetTokenHandler.HandleResetPassword)
 		})
 		
 		r.Group(func(r chi.Router) {
@@ -31,7 +31,7 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 			})
 
 			r.Patch("/users/{id}/", app.UserHandler.HandleUpdateUser)
-			r.Post("/admin/reset-tokens/", app.UserHandler.HandleGenerateResetToken)
+			r.Post("/admin/reset-tokens/", app.ResetTokenHandler.HandleGenerateResetLink)
 			r.Get("/admin/users/", app.UserHandler.HandleListUsers)
 			r.Post("/projects/", app.ProjectHandler.HandleCreateProject)
 

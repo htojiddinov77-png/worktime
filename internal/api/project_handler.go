@@ -103,23 +103,38 @@ func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	active, err := ph.projectStore.ListActiveSessions(ctx)
-	if err != nil {
-		ph.logger.Println("ListActiveSessions error:", err)
-		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
-		return
+	u, ok := middleware.GetUser(r)
+
+	isAdmin := false
+	if ok && u != nil && u.Role == "admin" {
+		isAdmin = true
 	}
 
 	activeByProject := map[int64][]store.ActiveSessionRow{}
-	for _, a := range active {
-		a.ActiveMinutes = a.ActiveSeconds / 60
-		activeByProject[a.ProjectId] = append(activeByProject[a.ProjectId], a)
+
+	if isAdmin {
+		active, err := ph.projectStore.ListActiveSessions(ctx)
+		if err != nil {
+			ph.logger.Println("ListActiveSessions error:", err)
+			utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+			return
+		}
+
+		for _, a := range active {
+			a.ActiveMinutes = a.ActiveSeconds / 60
+			activeByProject[a.ProjectId] = append(activeByProject[a.ProjectId], a)
+		}
 	}
 
 	for i := range projects {
 		projects[i].TotalDurations = formatDuration(projects[i].TotalSeconds)
-		projects[i].ActiveSessions = activeByProject[projects[i].Id] // nil -> omitted? see note below
-		if projects[i].ActiveSessions == nil {
+
+		if isAdmin {
+			projects[i].ActiveSessions = activeByProject[projects[i].Id]
+			if projects[i].ActiveSessions == nil {
+				projects[i].ActiveSessions = []store.ActiveSessionRow{}
+			}
+		} else {
 			projects[i].ActiveSessions = []store.ActiveSessionRow{}
 		}
 	}
@@ -127,26 +142,41 @@ func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Requ
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{"count": len(projects), "projects": projects})
 }
 
-
 // func (ph *ProjectHandler) HandleListProjects(w http.ResponseWriter, r *http.Request) {
-// 	projects, err := ph.projectStore.ListProjects(r.Context())
+// 	ctx := r.Context()
+
+// 	projects, err := ph.projectStore.ListProjects(ctx)
 // 	if err != nil {
 // 		ph.logger.Println("ListProjects error:", err)
-// 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{
-// 			"error": "internal server error",
-// 		})
+// 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 // 		return
 // 	}
 
-// 	for i := range projects {
-// 		projects[i].TotalDurations = formatDuration((projects[i].TotalSeconds))
+// 	active, err := ph.projectStore.ListActiveSessions(ctx)
+// 	if err != nil {
+// 		ph.logger.Println("ListActiveSessions error:", err)
+// 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+// 		return
 // 	}
 
-// 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
-// 		"count":    len(projects),
-// 		"projects": projects,
-// 	})
+// 	activeByProject := map[int64][]store.ActiveSessionRow{}
+// 	for _, a := range active {
+// 		a.ActiveMinutes = a.ActiveSeconds / 60
+// 		activeByProject[a.ProjectId] = append(activeByProject[a.ProjectId], a)
+// 	}
+
+// 	for i := range projects {
+// 		projects[i].TotalDurations = formatDuration(projects[i].TotalSeconds)
+// 		projects[i].ActiveSessions = activeByProject[projects[i].Id] // nil -> omitted? see note below
+// 		if projects[i].ActiveSessions == nil {
+// 			projects[i].ActiveSessions = []store.ActiveSessionRow{}
+// 		}
+// 	}
+
+// 	utils.WriteJson(w, http.StatusOK, utils.Envelope{"count": len(projects), "projects": projects})
 // }
+
+
 
 func (ph *ProjectHandler) HandleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUser(r)

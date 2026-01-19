@@ -214,27 +214,49 @@ Response: `200 OK`
 
 ### GET /projects
 List projects.
-
+Admin can see, active sessions.Regular user can't see active_sessions.
 Response: `200 OK`
 ```json
 {
-    "count": 2,
+    "count": 3,
     "projects": [
         {
-            "id": 1,
             "name": "Cosmos",
             "status": {
                 "id": 1,
                 "name": "active"
-            }
+            },
+            "total_durations": "25841 minutes",
+            "active_sessions": [
+                {
+                    "id": 1,
+                    "user": {
+                        "id": 6,
+                        "name": "nobody",
+                        "email": "nobody@gmail.com"
+                    },
+                    "start_at": "2026-01-19T11:30:26.919913-05:00",
+                    "active_minutes": 12
+                }
+            ]
         },
         {
-            "id": 2,
             "name": "LLC opening",
             "status": {
                 "id": 1,
                 "name": "active"
-            }
+            },
+            "total_durations": "20 minutes",
+            "active_sessions": []
+        },
+        {
+            "name": "Recruiting",
+            "status": {
+                "id": 1,
+                "name": "active"
+            },
+            "total_durations": "6986 minutes",
+            "active_sessions": []
         }
     ]
 }
@@ -707,7 +729,7 @@ Response: `200 OK`
 }
 ```
 
-### POST /admin/reset-tokens/
+### POST /admin/reset-tokens/{token}
 Generate a reset token for a user (admin-only).
 
 Request Body:

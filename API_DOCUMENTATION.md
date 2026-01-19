@@ -35,15 +35,6 @@ Authenticate using `POST /auth/login/` and include the returned token in subsequ
 | role | string | User role: `user` or `admin` |
 | exp | integer | Expiration time (Unix seconds) |
 
-### Reset Token (JWT)
-| Field | Type | Description |
-| --- | --- | --- |
-| user_id | integer | User ID |
-| email | string | User email |
-| role | string | User role: `user` or `admin` |
-| is_active | boolean | User active status at token creation |
-| exp | integer | Expiration time (Unix seconds) |
-
 ## Response Format
 All responses are returned in JSON format.
 
@@ -178,13 +169,12 @@ Response: `200 OK`
 }
 ```
 
-### POST /auth/reset-password/
+### POST /auth/reset-password/{token}
 Reset a password using a reset token.
 
 Request Body:
 | Field | Type | Required | Validation |
 | --- | --- | --- | --- |
-| token | string | Yes | Must be non-empty |
 | new_password | string | Yes | Must be non-empty |
 | confirm_password | string | Yes | Must match `new_password` |
 
@@ -728,8 +718,8 @@ Request Body:
 Response: `200 OK`
 ```json
 {
- "reset_token": "jwt.reset.token",
- "expires_at": "2024-01-01T10:10:00Z"
+ "expires_at": "2024-01-01T10:10:00Z",
+ "reset_link": "http://localhost:4000/v1/auth/reset-password/n-qtBuK_I4os",
 }
 ```
 

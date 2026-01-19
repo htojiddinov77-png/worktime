@@ -166,12 +166,12 @@ func generateShortToken(length int) (string, error) {
 		return "", err
 	}
 
-	s := base64.RawURLEncoding.EncodeToString(bytes)
+	s := base64.RawURLEncoding.EncodeToString(bytes) // base64 faqat harflar va raqamlar rawURLEncoding +,/,= shu belgilarsiz token generate qiladi
 	if len(s) < length {
 		return "", errors.New("could not generate token")
 	}
 
-	return s[:length], nil
+	return s[:length], nil // shu joyi lenth qancha bo'lsa shuncha token oladi, ya'ni tokenni qisqa qiladi
 }
 
 func hashToken(raw string) []byte {

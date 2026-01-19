@@ -97,7 +97,7 @@ func (rh *ResetTokenHandler) HandleGenerateResetLink(w http.ResponseWriter, r *h
 		return
 	}
 
-	resetLink := "http://localhost:4000/v1/reset-password/" + shortToken
+	resetLink := "http://localhost:4000/v1/auth/reset-password/" + shortToken
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
 		"reset_link": resetLink,

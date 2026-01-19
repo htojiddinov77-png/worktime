@@ -1,4 +1,4 @@
--- +goose Up
+    -- +goose Up
 -- +goose StatementBegin
 
 CREATE TABLE IF NOT EXISTS work_sessions(

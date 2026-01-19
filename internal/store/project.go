@@ -20,7 +20,7 @@ type ProjectStatus struct {
 }
 
 type ProjectRow struct {
-	Id     int64         `json:"-"`
+	Id     int64         `json:"project_id"`
 	Name   string        `json:"name"`
 	Status ProjectStatus `json:"status"`
 

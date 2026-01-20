@@ -9,7 +9,7 @@ import (
 func SetUpRoutes(app *app.Application) *chi.Mux {
 	r := chi.NewRouter()
 
-	r.Route("api/v1", func(r chi.Router) {	
+	r.Route("/api/v1", func(r chi.Router) {	
 
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/register/", app.UserHandler.HandleRegister)

@@ -25,7 +25,7 @@ jobs:
 
             go mod download
 
-            go build -o /home/api/worktime/worktime-api ./...
+            go build -o /home/api/worktime/worktime-api .
 
             sudo systemctl restart worktime
             sudo systemctl status worktime --no-pager

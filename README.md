@@ -2,7 +2,7 @@
 
 This Go service provides the backend APIs for the Worktime frontend. It runs on a local HTTP server and exposes JSON APIs under `/v1`.
 
-Frontend needs:
+Frontend needs nothing:
 - Base URL: `http://localhost:4000` (default)
 - Port: `4000` by default, override with `WORKTIME_PORT` or `-port`
 - CORS allowed origins: `http://localhost:5173`, `http://localhost:3000`

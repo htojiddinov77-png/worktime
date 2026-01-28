@@ -141,7 +141,7 @@ func (pg *PostgresUserStore) GetUserByEmail(ctx context.Context,email string) (*
 	user := &User{}
 
 	query := `
-		SELECT id, name, email, password_hash, role, is_active, created_at
+		SELECT id, name, email, password_hash, role, is_active, is_locked, last_failed_login, failed_attempts, created_at
 		FROM users
 		WHERE email = $1
 	`
@@ -153,6 +153,9 @@ func (pg *PostgresUserStore) GetUserByEmail(ctx context.Context,email string) (*
 		&user.PasswordHash.hash,
 		&user.Role,
 		&user.IsActive,
+		&user.IsLocked,
+		&user.LastFailedLogin,
+		&user.FailedAttempts,
 		&user.CreatedAt,
 	)
 

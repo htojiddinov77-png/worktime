@@ -406,30 +406,6 @@ for admin
     "result": [
         {
             "user": {
-                "user_id": 1,
-                "name": "Nuriddin",
-                "email": "1111@gmail.com",
-                "is_active": true
-            },
-            "project": {
-                "id": 3,
-                "name": "Recruiting",
-                "status": {
-                    "id": 1,
-                    "name": "active"
-                }
-            },
-            "sessions": {
-                "id": 21,
-                "start_at": "2026-01-14T15:06:32.363536-05:00",
-                "end_at": null,
-                "note": "Hiring driver",
-                "created_at": "2026-01-14T15:06:32.363536-05:00"
-            },
-            "status": "active"
-        },
-        {
-            "user": {
                 "user_id": 6,
                 "name": "nobody",
                 "email": "nobody@gmail.com",
@@ -449,30 +425,6 @@ for admin
                 "end_at": "2026-01-13T15:08:31.518004-05:00",
                 "note": "opening LLC with Florida",
                 "created_at": "2026-01-13T15:05:52.566651-05:00"
-            },
-            "status": "inactive"
-        },
-        {
-            "user": {
-                "user_id": 3,
-                "name": "Hasanboy",
-                "email": "2222@gmail.com",
-                "is_active": true
-            },
-            "project": {
-                "id": 2,
-                "name": "LLC opening",
-                "status": {
-                    "id": 1,
-                    "name": "active"
-                }
-            },
-            "sessions": {
-                "id": 18,
-                "start_at": "2026-01-13T15:02:32.104552-05:00",
-                "end_at": "2026-01-13T15:06:32.723786-05:00",
-                "note": "opening fucking LLC",
-                "created_at": "2026-01-13T15:02:32.104552-05:00"
             },
             "status": "inactive"
         },
@@ -556,54 +508,6 @@ for admin
                 "is_active": true
             },
             "project": {
-                "id": 2,
-                "name": "LLC opening",
-                "status": {
-                    "id": 1,
-                    "name": "active"
-                }
-            },
-            "sessions": {
-                "id": 4,
-                "start_at": "2025-12-26T16:22:40.613695-05:00",
-                "end_at": "2025-12-26T16:32:35.736038-05:00",
-                "note": "",
-                "created_at": "2025-12-26T16:22:40.613695-05:00"
-            },
-            "status": "inactive"
-        },
-        {
-            "user": {
-                "user_id": 1,
-                "name": "Nuriddin",
-                "email": "1111@gmail.com",
-                "is_active": true
-            },
-            "project": {
-                "id": 1,
-                "name": "Cosmos",
-                "status": {
-                    "id": 1,
-                    "name": "active"
-                }
-            },
-            "sessions": {
-                "id": 3,
-                "start_at": "2025-12-23T17:34:08.444308-05:00",
-                "end_at": "2025-12-23T17:36:50.697734-05:00",
-                "note": "",
-                "created_at": "2025-12-23T17:34:08.444308-05:00"
-            },
-            "status": "inactive"
-        },
-        {
-            "user": {
-                "user_id": 1,
-                "name": "Nuriddin",
-                "email": "1111@gmail.com",
-                "is_active": true
-            },
-            "project": {
                 "id": 1,
                 "name": "Cosmos",
                 "status": {
@@ -620,30 +524,6 @@ for admin
             },
             "status": "inactive"
         },
-        {
-            "user": {
-                "user_id": 1,
-                "name": "Nuriddin",
-                "email": "1111@gmail.com",
-                "is_active": true
-            },
-            "project": {
-                "id": 1,
-                "name": "Cosmos",
-                "status": {
-                    "id": 1,
-                    "name": "active"
-                }
-            },
-            "sessions": {
-                "id": 1,
-                "start_at": "2025-12-22T13:55:46.540247-05:00",
-                "end_at": "2025-12-22T14:02:04.611948-05:00",
-                "note": "working with cosmos",
-                "created_at": "2025-12-22T13:55:46.540247-05:00"
-            },
-            "status": "inactive"
-        }
     ]
 }
 ```

@@ -17,15 +17,11 @@ jobs:
           script: |
             set -e
 
-            echo "Connected: $(hostname)"
-            echo "User: $(whoami)"
-
             cd /home/api/worktime
             git pull origin main
 
-            go mod download
-
-            go build -o /home/api/worktime/worktime-api .
+            /usr/local/go/bin/go mod download
+            /usr/local/go/bin/go build -o /home/api/worktime/worktime-api .
 
             sudo systemctl restart worktime
             sudo systemctl status worktime --no-pager

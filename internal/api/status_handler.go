@@ -18,7 +18,7 @@ func NewStatusHandler(statusStore store.StatusStore) *StatusHandler {
 
 func (h *StatusHandler) HandleGetAllStatuses(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUser(r)
-	if !ok || user == nil || user.Role != "admin" {
+	if !ok || user == nil {
 		utils.WriteJson(w, http.StatusForbidden, utils.Envelope{"error": "forbidden"})
 		return
 	}

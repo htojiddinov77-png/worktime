@@ -117,7 +117,7 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
 		return
 	}
-
+	
 	err = wh.workSessionStore.StopSession(r.Context(), sessionId, user.Id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

@@ -140,9 +140,18 @@ func (pg *PostgresWorkSessionStore) StartSession(ctx context.Context, ws *WorkSe
 
 func (pg *PostgresWorkSessionStore) StopSession(ctx context.Context, sessionID int64, userID int64) error {
 	query := `
-		UPDATE work_sessions
+		UPDATE work_sessions ws
 		SET end_at = NOW()
-		WHERE id = $1 AND user_id = $2 AND end_at IS NULL
+		WHERE ws.id = $1
+		  AND ws.end_at IS NULL
+		  AND (
+		        ws.user_id = $2
+		        OR EXISTS (
+		              SELECT 1
+		              FROM users u
+		              WHERE u.id = $2 AND u.role = 'admin'
+		        )
+		  )
 	`
 
 	result, err := pg.db.ExecContext(ctx, query, sessionID, userID)

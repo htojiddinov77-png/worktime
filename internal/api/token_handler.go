@@ -81,7 +81,6 @@ func (th *TokenHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 		if existingUser.FailedAttempts+1 > 4 {
 			th.UserStore.Lockout(r.Context(), existingUser.Email)
-			utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "You're locked for one day"})
 		}
 		return
 	} else {

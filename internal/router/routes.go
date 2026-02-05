@@ -10,7 +10,7 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Route("/api/v1", func(r chi.Router) {	
-
+		
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/register/", app.UserHandler.HandleRegister)
 			r.Post("/login/", app.TokenHandler.LoginHandler)
@@ -19,6 +19,8 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 		
 		r.Group(func(r chi.Router) {
 			r.Use(app.Middleware.Authenticate)
+			r.Get("/events/", app.EventHub.ServeSSE)
+
 			r.Get("/statuses/", app.StatusHandler.HandleGetAllStatuses)
 			r.Get("/projects/", app.ProjectHandler.HandleListProjects)
 			r.Patch("/project/{id}/", app.ProjectHandler.HandleUpdateProject)

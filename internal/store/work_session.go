@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -118,7 +119,7 @@ type UserSummary struct {
 
 type WorkSessionStore interface {
 	StartSession(ctx context.Context, ws *WorkSession) error
-	StopSession(ctx context.Context, sessionID int64, userID int64) error
+	StopSession(ctx context.Context, sessionID, userID int64) (int64, time.Time, error)
 	GetSummaryReport(ctx context.Context, filter SummaryRangeFilter) (*SummaryReport, error)
 	ListSessions(ctx context.Context, filter WorkSessionFilter) ([]WorkSessionRow, int, error)
 }
@@ -138,7 +139,7 @@ func (pg *PostgresWorkSessionStore) StartSession(ctx context.Context, ws *WorkSe
 	return nil
 }
 
-func (pg *PostgresWorkSessionStore) StopSession(ctx context.Context, sessionID int64, userID int64) error {
+func (pg *PostgresWorkSessionStore) StopSession(ctx context.Context, sessionID, userID int64) (int64, time.Time, error) {
 	query := `
 		UPDATE work_sessions ws
 		SET end_at = NOW()
@@ -152,24 +153,23 @@ func (pg *PostgresWorkSessionStore) StopSession(ctx context.Context, sessionID i
 		              WHERE u.id = $2 AND u.role = 'admin'
 		        )
 		  )
+		RETURNING ws.user_id, ws.end_at;
 	`
 
-	result, err := pg.db.ExecContext(ctx, query, sessionID, userID)
+	var ownerUserID int64
+	var endAt time.Time
+
+	err := pg.db.QueryRowContext(ctx, query, sessionID, userID).Scan(&ownerUserID, &endAt)
 	if err != nil {
-		return err
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, time.Time{}, sql.ErrNoRows
+		}
+		return 0, time.Time{}, err
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
-		return sql.ErrNoRows
-	}
-
-	return nil
+	return ownerUserID, endAt, nil
 }
+
 
 func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter WorkSessionFilter) ([]WorkSessionRow, int, error) {
 	limit := filter.Limit()

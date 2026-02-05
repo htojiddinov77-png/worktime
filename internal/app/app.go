@@ -24,6 +24,7 @@ type Application struct {
 
 	Middleware *middleware.Middleware
 	JWT        *auth.JWTManager
+	EventHub   *api.Hub
 }
 
 func NewApplication() (*Application, error) {
@@ -43,16 +44,21 @@ func NewApplication() (*Application, error) {
 	// JWT manager (auth package)
 	jwtManager := auth.NewJWTManager()
 
+	eventHub := api.NewHub()
+
 	// Handlers
 	userHandler := api.NewUserHandler(userStore, logger, jwtManager)
 	projectHandler := api.NewProjectHandler(projectStore, userStore, logger)
-	workSessionHandler := api.NewWorkSessionHandler(workSessionStore, userStore, logger, middleware.Middleware{JWT: jwtManager})
+	workSessionHandler := api.NewWorkSessionHandler(workSessionStore, userStore, logger, middleware.Middleware{JWT: jwtManager},eventHub)
 	tokenHandler := api.NewTokenHandler(userStore, jwtManager, logger)
 	statusHandler := api.NewStatusHandler(statusStore)
 	resetTokenHandler := api.NewResetTokenHandler(resetTokenStore, userStore, logger)
 
 	// Middleware (depends on auth only)
 	mw := &middleware.Middleware{JWT: jwtManager}
+
+	
+
 
 	app := &Application{
 		Logger:             logger,
@@ -65,6 +71,8 @@ func NewApplication() (*Application, error) {
 		ResetTokenHandler:  resetTokenHandler,
 		Middleware:         mw,
 		JWT:                jwtManager,
+		EventHub: eventHub,
+
 	}
 
 	return app, nil

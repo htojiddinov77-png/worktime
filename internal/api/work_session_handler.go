@@ -20,14 +20,16 @@ type WorkSessionHandler struct {
 	userStore        store.UserStore
 	logger           *log.Logger
 	Middleware       middleware.Middleware
+	Hub *Hub
 }
 
-func NewWorkSessionHandler(workSessionStore store.WorkSessionStore,userStore store.UserStore,logger *log.Logger,middleware middleware.Middleware) *WorkSessionHandler {
+func NewWorkSessionHandler(workSessionStore store.WorkSessionStore,userStore store.UserStore,logger *log.Logger,middleware middleware.Middleware, hub *Hub) *WorkSessionHandler {
 	return &WorkSessionHandler{
 		workSessionStore: workSessionStore,
 		userStore:        userStore,
 		logger:           logger,
 		Middleware:       middleware,
+		Hub: hub,
 	}
 }
 
@@ -98,6 +100,18 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 		return
 	}
 
+	wh.Hub.Publish(Event{
+    Type:   "session_started",
+    UserID: ws.UserId,
+    Data: map[string]any{
+        "session_id": ws.Id,
+        "user_id":    ws.UserId,
+        "project_id": ws.ProjectId,
+        "start_at":   ws.StartAt,
+    },
+})
+
+
 	// new session is active because EndAt is nil
 	utils.WriteJson(w, http.StatusCreated, utils.Envelope{
 		"session": ws,
@@ -113,12 +127,12 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 	}
 
 	user, ok := middleware.GetUser(r)
-	if !ok || user == nil {
+	if !ok || user == nil || user.Id == 0 {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
 		return
 	}
-	
-	err = wh.workSessionStore.StopSession(r.Context(), sessionId, user.Id)
+
+	ownerUserID, endAt, err := wh.workSessionStore.StopSession(r.Context(), sessionId, user.Id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "no active session"})
@@ -129,11 +143,26 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// publish SSE AFTER success
+	if wh.Hub != nil {
+		wh.Hub.Publish(Event{
+			Type:   "session_stopped",
+			UserID: ownerUserID, // notify the session owner (regular user)
+			Data: map[string]any{
+				"session_id": sessionId,
+				"user_id":    ownerUserID,
+				"stopped_by": user.Id, // admin or self
+				"end_at":     endAt,
+			},
+		})
+	}
+
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
 		"message":    "session stopped",
 		"session_id": sessionId,
 	})
 }
+
 
 func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()

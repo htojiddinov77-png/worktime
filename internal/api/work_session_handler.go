@@ -131,7 +131,7 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
 		return
 	}
-
+	// onwerUserID is id who owns this sessions
 	ownerUserID, endAt, err := wh.workSessionStore.StopSession(r.Context(), sessionId, user.Id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -147,11 +147,11 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 	if wh.Hub != nil {
 		wh.Hub.Publish(Event{
 			Type:   "session_stopped",
-			UserID: ownerUserID, // notify the session owner (regular user)
+			UserID: ownerUserID, 
 			Data: map[string]any{
 				"session_id": sessionId,
 				"user_id":    ownerUserID,
-				"stopped_by": user.Id, // admin or self
+				"stopped_by": user.Id, 
 				"end_at":     endAt,
 			},
 		})

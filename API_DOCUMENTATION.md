@@ -4,7 +4,7 @@
 Worktime is a time tracking API with user authentication, projects, statuses, and work sessions.
 
 ## Base URL
-`http://localhost:4000/v1/`
+`http://localhost:4000/api/v1/`
 
 ## Table of Contents
 - Authentication
@@ -113,6 +113,7 @@ Base path: `/v1`
 | GET | /projects | Yes |
 | POST | /projects/ | Yes (admin) |
 | PATCH | /project/{id}/ | Yes (admin) |
+| GET | /events/ | Yes |
 | POST | /work-sessions/start/ | Yes |
 | PATCH | /work-sessions/stop/{id}/ | Yes |
 | GET | /work-sessions/list/ | Yes |
@@ -261,6 +262,62 @@ Response: `200 OK`
     ]
 }
 ```
+
+---
+
+## Events (SSE)
+
+This API exposes Server-Sent Events (SSE) for real-time updates about work sessions.
+
+### GET /events/
+Open a long-lived HTTP connection that continuously streams events.
+
+Auth required: Yes. The backend checks the `Authorization: Bearer <token>` header.
+
+Important:
+- If you do not send `Authorization`, the server responds `401 Unauthorized`.
+- The stream is best-effort: if the client is too slow, some events can be dropped.
+- Admins receive all events. Normal users receive only their own events.
+- The server sends a keepalive comment every 10 seconds (`: keepalive`) to prevent idle timeouts.
+
+#### Request
+```
+GET /api/v1/events/
+Authorization: Bearer <token>
+Accept: text/event-stream
+```
+
+#### Response Headers
+```
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+X-Accel-Buffering: no
+```
+
+#### Event Types
+- `connected`: sent immediately after connect.
+  - data: `{"ok":true}`
+- `session_started`: emitted when a work session starts.
+  - data fields: `session_id`, `user_id`, `project_id`, `start_at`
+- `session_stopped`: emitted when a work session stops.
+  - data fields: `session_id`, `user_id`, `stopped_by`, `end_at`
+
+#### Example Stream (raw SSE frames)
+```
+event: connected
+data: {"ok":true}
+
+event: session_started
+data: {"session_id":123,"user_id":7,"project_id":42,"start_at":"2026-02-06T15:04:05Z"}
+
+event: session_stopped
+data: {"session_id":123,"user_id":7,"stopped_by":7,"end_at":"2026-02-06T15:55:10Z"}
+```
+
+---
+
+---
 
 ### POST /projects/
 Create a project (admin-only).

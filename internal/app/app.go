@@ -9,6 +9,7 @@ import (
 	"github.com/htojiddinov77-png/worktime/internal/auth"
 	"github.com/htojiddinov77-png/worktime/internal/middleware"
 	"github.com/htojiddinov77-png/worktime/internal/store"
+	redis "github.com/redis/go-redis/v9"
 )
 
 type Application struct {
@@ -24,7 +25,6 @@ type Application struct {
 
 	Middleware *middleware.Middleware
 	JWT        *auth.JWTManager
-	EventHub   *api.Hub
 }
 
 func NewApplication() (*Application, error) {
@@ -43,17 +43,20 @@ func NewApplication() (*Application, error) {
 	resetTokenStore := store.NewPostgresResetTokenStore(pgDB)
 	// JWT manager (auth package)
 	jwtManager := auth.NewJWTManager()
+	rds := redis.NewClient(&redis.Options{
+	Addr: "localhost:6379",
+	})
 
-	eventHub := api.NewHub()
-
+	
 	// Handlers
 	userHandler := api.NewUserHandler(userStore, logger, jwtManager)
 	projectHandler := api.NewProjectHandler(projectStore, userStore, logger)
-	workSessionHandler := api.NewWorkSessionHandler(workSessionStore, userStore, logger, middleware.Middleware{JWT: jwtManager},eventHub)
+	workSessionHandler := api.NewWorkSessionHandler(workSessionStore, userStore, logger, middleware.Middleware{JWT: jwtManager},rds)
 	tokenHandler := api.NewTokenHandler(userStore, jwtManager, logger)
 	statusHandler := api.NewStatusHandler(statusStore)
 	resetTokenHandler := api.NewResetTokenHandler(resetTokenStore, userStore, logger)
 
+	
 	// Middleware (depends on auth only)
 	mw := &middleware.Middleware{JWT: jwtManager}
 
@@ -71,7 +74,7 @@ func NewApplication() (*Application, error) {
 		ResetTokenHandler:  resetTokenHandler,
 		Middleware:         mw,
 		JWT:                jwtManager,
-		EventHub: eventHub,
+
 
 	}
 

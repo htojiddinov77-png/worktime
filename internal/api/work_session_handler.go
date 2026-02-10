@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -13,6 +15,8 @@ import (
 	"github.com/htojiddinov77-png/worktime/internal/middleware"
 	"github.com/htojiddinov77-png/worktime/internal/store"
 	"github.com/htojiddinov77-png/worktime/internal/utils"
+
+	redis "github.com/redis/go-redis/v9"
 )
 
 type WorkSessionHandler struct {
@@ -20,18 +24,75 @@ type WorkSessionHandler struct {
 	userStore        store.UserStore
 	logger           *log.Logger
 	Middleware       middleware.Middleware
-	Hub *Hub
+
+	rds *redis.Client
 }
 
-func NewWorkSessionHandler(workSessionStore store.WorkSessionStore,userStore store.UserStore,logger *log.Logger,middleware middleware.Middleware, hub *Hub) *WorkSessionHandler {
+func NewWorkSessionHandler(workSessionStore store.WorkSessionStore, userStore store.UserStore, logger *log.Logger, middleware middleware.Middleware, rds *redis.Client) *WorkSessionHandler {
 	return &WorkSessionHandler{
 		workSessionStore: workSessionStore,
 		userStore:        userStore,
 		logger:           logger,
 		Middleware:       middleware,
-		Hub: hub,
+		rds:              rds,
 	}
 }
+
+type event struct {
+	Type      string `json:"type"`
+	SessionID int64  `json:"session_id"`
+	UserID    int64  `json:"user_id"`
+}
+
+var redisEventsChannel = "worktime_events"
+
+func (wh *WorkSessionHandler) publishEvent(ctx context.Context, evt event) {
+	jsonBytes, err := json.Marshal(evt)
+	if err != nil {
+		wh.logger.Printf("failed to marshal json %v", err)
+		return
+	}
+
+	err = wh.rds.Publish(ctx, redisEventsChannel, jsonBytes).Err()
+	if err != nil {
+		wh.logger.Printf("failed to publish event %v", err)
+		return
+	}
+}
+
+func (wh *WorkSessionHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming failed to connect", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := r.Context()
+
+	pubsub := wh.rds.Subscribe(ctx, redisEventsChannel) 
+
+	defer pubsub.Close()
+
+	ch := pubsub.Channel()
+
+	for {
+		select {
+		case <- ctx.Done():
+			return
+		case msg, ok := <-ch: // take from channel
+			if !ok {
+				return
+			}
+			fmt.Fprintf(w, "data: %s\n\n", msg.Payload)
+			flusher.Flush()
+		}
+	}
+}
+
 
 
 func parseTimeParam(s string) (time.Time, error) {
@@ -40,7 +101,6 @@ func parseTimeParam(s string) (time.Time, error) {
 		return time.Time{}, errors.New("empty time")
 	}
 
-	
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t, nil
 	}
@@ -62,7 +122,6 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 
 	dec := json.NewDecoder(r.Body)
 
-
 	if err := dec.Decode(&req); err != nil {
 		wh.logger.Println("Error decoding request:", err)
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid JSON body"})
@@ -80,7 +139,6 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
 		return
 	}
-	
 
 	ws := &store.WorkSession{
 		UserId:    user.Id,
@@ -99,18 +157,12 @@ func (wh *WorkSessionHandler) HandleStartSession(w http.ResponseWriter, r *http.
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
 		return
 	}
-
-	wh.Hub.Publish(Event{
-    Type:   "session_started",
-    UserID: ws.UserId,
-    Data: map[string]any{
-        "session_id": ws.Id,
-        "user_id":    ws.UserId,
-        "project_id": ws.ProjectId,
-        "start_at":   ws.StartAt,
-    },
-})
-
+	evt := event{
+		Type:      "session_started",
+		SessionID: ws.Id,
+		UserID:    user.Id,
+	}
+	wh.publishEvent(r.Context(), evt)
 
 	// new session is active because EndAt is nil
 	utils.WriteJson(w, http.StatusCreated, utils.Envelope{
@@ -131,8 +183,8 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
 		return
 	}
-	// onwerUserID is id who owns this sessions
-	ownerUserID, endAt, err := wh.workSessionStore.StopSession(r.Context(), sessionId, user.Id)
+
+	err = wh.workSessionStore.StopSession(r.Context(), sessionId, user.Id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "no active session"})
@@ -143,19 +195,13 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// publish SSE AFTER success
-	if wh.Hub != nil {
-		wh.Hub.Publish(Event{
-			Type:   "session_stopped",
-			UserID: ownerUserID, 
-			Data: map[string]any{
-				"session_id": sessionId,
-				"user_id":    ownerUserID,
-				"stopped_by": user.Id, 
-				"end_at":     endAt,
-			},
-		})
+	evt := event{
+		Type:      "session_stopped",
+		SessionID: sessionId,
+		UserID:    user.Id,
 	}
+
+	wh.publishEvent(r.Context(), evt)
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
 		"message":    "session stopped",
@@ -163,11 +209,10 @@ func (wh *WorkSessionHandler) HandleStopSession(w http.ResponseWriter, r *http.R
 	})
 }
 
-
 func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
-	u, ok:= middleware.GetUser(r)
+	u, ok := middleware.GetUser(r)
 	if u == nil || u.Id <= 0 || !ok {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
 		return
@@ -181,7 +226,7 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 	var filter store.WorkSessionFilter
 
 	filter.Page = utils.ReadInt(r, "page", 1)
- 	filter.PageSize = utils.ReadInt(r, "page_size", 50)
+	filter.PageSize = utils.ReadInt(r, "page_size", 50)
 
 	if s := strings.TrimSpace(q.Get("search")); s != "" {
 		filter.Search = &s
@@ -219,7 +264,6 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 		filter.UserID = &uid
 	}
 
-	
 	if err := filter.Validate(); err != nil {
 		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": err.Error()})
 		return
@@ -235,7 +279,7 @@ func (wh *WorkSessionHandler) HandleListSessions(w http.ResponseWriter, r *http.
 	meta := store.CalculateMetadata(total, filter.Page, filter.PageSize)
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
-		"result": rows,
+		"result":   rows,
 		"metadata": meta,
 	})
 }
@@ -329,7 +373,3 @@ func (wh *WorkSessionHandler) HandleGetSummaryReport(w http.ResponseWriter, r *h
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{"report": report})
 }
-
-
-
-

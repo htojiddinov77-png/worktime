@@ -119,7 +119,7 @@ type UserSummary struct {
 
 type WorkSessionStore interface {
 	StartSession(ctx context.Context, ws *WorkSession) error
-	StopSession(ctx context.Context, sessionID, userID int64) (int64, time.Time, error)
+	StopSession(ctx context.Context, sessionID, userID int64) (error)
 	GetSummaryReport(ctx context.Context, filter SummaryRangeFilter) (*SummaryReport, error)
 	ListSessions(ctx context.Context, filter WorkSessionFilter) ([]WorkSessionRow, int, error)
 }
@@ -139,7 +139,7 @@ func (pg *PostgresWorkSessionStore) StartSession(ctx context.Context, ws *WorkSe
 	return nil
 }
 
-func (pg *PostgresWorkSessionStore) StopSession(ctx context.Context, sessionID, userID int64) (int64, time.Time, error) {
+func (pg *PostgresWorkSessionStore) StopSession(ctx context.Context, sessionID, userID int64) error {
 	query := `
 		UPDATE work_sessions ws
 		SET end_at = NOW()
@@ -153,21 +153,18 @@ func (pg *PostgresWorkSessionStore) StopSession(ctx context.Context, sessionID, 
 		              WHERE u.id = $2 AND u.role = 'admin'
 		        )
 		  )
-		RETURNING ws.user_id, ws.end_at;
 	`
 
-	var ownerUserID int64
-	var endAt time.Time
 
-	err := pg.db.QueryRowContext(ctx, query, sessionID, userID).Scan(&ownerUserID, &endAt)
+	_, err := pg.db.ExecContext(ctx, query, sessionID, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, time.Time{}, sql.ErrNoRows
+			return err
 		}
-		return 0, time.Time{}, err
+		return nil
 	}
 
-	return ownerUserID, endAt, nil
+	return nil
 }
 
 

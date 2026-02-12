@@ -62,3 +62,4 @@ Only the variables below are read by the app:
   Authorization: Bearer <jwt>
   ```
 - Health check: no dedicated endpoint; use `POST /v1/auth/login/` (it will return `400` or `401` without a valid body, which still confirms the server is responding).
+- SSE + Redis integration details for frontend: `FRONTEND_SSE_REDIS_GUIDE.md`

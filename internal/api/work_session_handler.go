@@ -47,16 +47,16 @@ type event struct {
 var redisEventsChannel = "worktime_events"
 
 func (wh *WorkSessionHandler) publishEvent(ctx context.Context, evt event) {
-	jsonBytes, err := json.Marshal(evt)
+	_, err := wh.rds.XAdd(ctx, &redis.XAddArgs{ // xadd appends new entry to redis stream
+		Stream: redisEventsChannel,
+		Values: map[string]interface{}{
+			"type": evt.Type,
+			"session_id": evt.SessionID,
+			"user_id": evt.UserID,
+		},
+	}).Result()
 	if err != nil {
-		wh.logger.Printf("failed to marshal json %v", err)
-		return
-	}
-
-	err = wh.rds.Publish(ctx, redisEventsChannel, jsonBytes).Err()
-	if err != nil {
-		wh.logger.Printf("failed to publish event %v", err)
-		return
+		wh.logger.Printf("failed to XADD event: %v", err)
 	}
 }
 
@@ -64,6 +64,7 @@ func (wh *WorkSessionHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -73,22 +74,39 @@ func (wh *WorkSessionHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	pubsub := wh.rds.Subscribe(ctx, redisEventsChannel) 
-
-	defer pubsub.Close()
-
-	ch := pubsub.Channel()
+	fmt.Fprint(w, ": connected\n\n")
+	flusher.Flush()
+	
 
 	for {
 		select {
 		case <- ctx.Done():
 			return
-		case msg, ok := <-ch: // take from channel
-			if !ok {
-				return
+		default:
+			streams, err := wh.rds.XRead(ctx, &redis.XReadArgs{
+				Streams: []string{redisEventsChannel, "$"},
+				Block: 0,
+				Count: 10,
+			}).Result()
+			if err != nil {
+				wh.logger.Println("XREAD failed: ", err)
+				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", msg.Payload)
-			flusher.Flush()
+
+			for _, s := range streams {
+				for _, msg := range s.Messages {
+
+
+					jsonBytes, err := json.Marshal(msg.Values)
+					if err != nil {
+						wh.logger.Println("marshal stream failed: ",err)
+						continue
+					}
+
+					fmt.Fprintf(w, "data: %s\n\n", jsonBytes)
+					flusher.Flush()
+				}
+			}
 		}
 	}
 }

@@ -19,7 +19,7 @@ func SetUpRoutes(app *app.Application) *chi.Mux {
 		
 		r.Group(func(r chi.Router) {
 			r.Use(app.Middleware.Authenticate)
-			r.Get("/event", app.WorkSessionHandler.ServeSSE)
+			r.Get("/events/", app.WorkSessionHandler.ServeSSE)
 			
 			r.Get("/statuses/", app.StatusHandler.HandleGetAllStatuses)
 			r.Get("/projects/", app.ProjectHandler.HandleListProjects)

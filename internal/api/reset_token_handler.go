@@ -97,7 +97,7 @@ func (rh *ResetTokenHandler) HandleGenerateResetLink(w http.ResponseWriter, r *h
 		return
 	}
 
-	resetLink := "https://portal.nahl.uz/api/v1/auth/reset-password/" + shortToken
+	resetLink := "https://portal.nahl.uz/api/v1/admin/reset-tokens/" + shortToken
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{
 		"reset_link": resetLink,

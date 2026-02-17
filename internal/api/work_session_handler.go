@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	
+
 	"github.com/htojiddinov77-png/worktime/internal/middleware"
 	"github.com/htojiddinov77-png/worktime/internal/store"
 	"github.com/htojiddinov77-png/worktime/internal/utils"
@@ -47,27 +49,33 @@ type event struct {
 var redisEventsChannel = "worktime_events"
 
 func (wh *WorkSessionHandler) publishEvent(ctx context.Context, evt event) {
-	_, err := wh.rds.XAdd(ctx, &redis.XAddArgs{ // xadd appends new entry to redis stream
+	wh.logger.Printf("Redis publishing event type=%s session_id=%d user_id=%d",
+		evt.Type, evt.SessionID, evt.UserID)
+	id, err := wh.rds.XAdd(ctx, &redis.XAddArgs{ // xadd appends new entry to redis stream
 		Stream: redisEventsChannel,
 		Values: map[string]interface{}{
-			"type": evt.Type,
+			"type":       evt.Type,
 			"session_id": evt.SessionID,
-			"user_id": evt.UserID,
+			"user_id":    evt.UserID,
 		},
 	}).Result()
 	if err != nil {
 		wh.logger.Printf("failed to XADD event: %v", err)
 	}
+
+	wh.logger.Printf("redis: event stored id=%s", id)
 }
 
 func (wh *WorkSessionHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
+	wh.logger.Println("SSE: new client connected")
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		wh.logger.Println("SSE: flusher not supported")
 		http.Error(w, "streaming failed to connect", http.StatusInternalServerError)
 		return
 	}
@@ -76,17 +84,23 @@ func (wh *WorkSessionHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
-	
+
+
+	lastID := "$"
+	wh.logger.Println("SSE: starting XREAD loop with lastID = ", lastID)
 
 	for {
 		select {
-		case <- ctx.Done():
+		case <-ctx.Done():
+			wh.logger.Println("SSE: client disconnected")
 			return
 		default:
+			wh.logger.Println("SSE: waiting for Redis events...")
+
 			streams, err := wh.rds.XRead(ctx, &redis.XReadArgs{
-				Streams: []string{redisEventsChannel, "$"},
-				Block: 0,
-				Count: 10,
+				Streams: []string{redisEventsChannel, lastID},
+				Block:   10 * time.Second,
+				Count:   10,
 			}).Result()
 			if err != nil {
 				wh.logger.Println("XREAD failed: ", err)
@@ -97,9 +111,14 @@ func (wh *WorkSessionHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 				for _, msg := range s.Messages {
 
 
+					lastID = msg.ID
+					wh.logger.Printf("SSE: event received id=%s type=%v user=%v session=%v",msg.ID,msg.Values["type"],
+					msg.Values["user_id"],msg.Values["session_id"])
+
+					
 					jsonBytes, err := json.Marshal(msg.Values)
 					if err != nil {
-						wh.logger.Println("marshal stream failed: ",err)
+						wh.logger.Println("marshal stream failed: ", err)
 						continue
 					}
 
@@ -110,8 +129,6 @@ func (wh *WorkSessionHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-
-
 
 func parseTimeParam(s string) (time.Time, error) {
 	s = strings.TrimSpace(s)

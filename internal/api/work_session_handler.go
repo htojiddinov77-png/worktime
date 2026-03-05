@@ -12,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	
-
 	"github.com/htojiddinov77-png/worktime/internal/middleware"
 	"github.com/htojiddinov77-png/worktime/internal/store"
 	"github.com/htojiddinov77-png/worktime/internal/utils"
@@ -85,7 +83,6 @@ func (wh *WorkSessionHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
 
-
 	lastID := "$"
 	wh.logger.Println("SSE: starting XREAD loop with lastID = ", lastID)
 
@@ -110,12 +107,10 @@ func (wh *WorkSessionHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 			for _, s := range streams {
 				for _, msg := range s.Messages {
 
-
 					lastID = msg.ID
-					wh.logger.Printf("SSE: event received id=%s type=%v user=%v session=%v",msg.ID,msg.Values["type"],
-					msg.Values["user_id"],msg.Values["session_id"])
+					wh.logger.Printf("SSE: event received id=%s type=%v user=%v session=%v", msg.ID, msg.Values["type"],
+						msg.Values["user_id"], msg.Values["session_id"])
 
-					
 					jsonBytes, err := json.Marshal(msg.Values)
 					if err != nil {
 						wh.logger.Println("marshal stream failed: ", err)
@@ -407,4 +402,94 @@ func (wh *WorkSessionHandler) HandleGetSummaryReport(w http.ResponseWriter, r *h
 	}
 
 	utils.WriteJson(w, http.StatusOK, utils.Envelope{"report": report})
+}
+
+func (wh *WorkSessionHandler) HandleListBatchCandidates(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	// 1) Auth (admin only)
+	u, ok := middleware.GetUser(r)
+	if !ok || u == nil || u.Id <= 0 {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "unauthorized"})
+		return
+	}
+	if u.Role != "admin" {
+		utils.WriteJson(w, http.StatusForbidden, utils.Envelope{"error": "forbidden"})
+		return
+	}
+
+	// 2) Required params: project_id, from, to
+	projectIDStr := strings.TrimSpace(q.Get("project_id"))
+	if projectIDStr == "" {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "project_id is required"})
+		return
+	}
+	projectID, err := strconv.ParseInt(projectIDStr, 10, 64)
+	if err != nil || projectID <= 0 {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid project_id"})
+		return
+	}
+
+	fromStr := strings.TrimSpace(q.Get("from"))
+	toStr := strings.TrimSpace(q.Get("to"))
+	if fromStr == "" || toStr == "" {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "from and to are required"})
+		return
+	}
+
+	from, err := parseTimeParam(fromStr) // you already have this helper in the file
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid from"})
+		return
+	}
+
+	to, err := parseTimeParam(toStr)
+	if err != nil {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "invalid to"})
+		return
+	}
+
+	// IMPORTANT: ensure from < to
+	if !from.Before(to) {
+		utils.WriteJson(w, http.StatusBadRequest, utils.Envelope{"error": "from must be before to"})
+		return
+	}
+
+	// 3) Optional search
+	var search *string
+	if s := strings.TrimSpace(q.Get("search")); s != "" {
+		search = &s
+	}
+
+	// 4) Store filter
+	filter := store.BatchCandidatesFilter{
+		ProjectID: projectID,
+		From:      from,
+		To:        to,
+		Search:    search,
+	}
+
+	// 5) Query
+	rows, total, err := wh.workSessionStore.ListBatchCandidates(r.Context(), filter)
+	if err != nil {
+		wh.logger.Println("ListBatchCandidates error:", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	type batchCandidatesResponse struct {
+		ProjectID int64                         `json:"project_id"`
+		From      string                        `json:"from"`
+		To        string                        `json:"to"`
+		Total     int                           `json:"total"`
+		Sessions  []store.BatchCandidateSession `json:"sessions"`
+	}
+
+	utils.WriteJson(w, http.StatusOK, batchCandidatesResponse{
+		ProjectID: projectID,
+		From:      from.Format(time.RFC3339),
+		To:        to.Format(time.RFC3339),
+		Total:     total,
+		Sessions:  rows,
+	})
 }

@@ -22,6 +22,7 @@ type Application struct {
 	ProjectHandler     *api.ProjectHandler
 	StatusHandler      *api.StatusHandler
 	ResetTokenHandler  *api.ResetTokenHandler
+	BatchHandler       *api.BatchHandler // ✅ ADD
 
 	Middleware *middleware.Middleware
 	JWT        *auth.JWTManager
@@ -41,27 +42,33 @@ func NewApplication() (*Application, error) {
 	projectStore := store.NewPostgresProjectStore(pgDB)
 	statusStore := store.NewPostgresStatusStore(pgDB)
 	resetTokenStore := store.NewPostgresResetTokenStore(pgDB)
+	batchStore := store.NewPostgresBatchStore(pgDB) // ✅ ADD
+
 	// JWT manager (auth package)
 	jwtManager := auth.NewJWTManager()
+
+	// Redis
 	rds := redis.NewClient(&redis.Options{
-	Addr: "localhost:6379",
+		Addr: "localhost:6379",
 	})
 
-	
-	// Handlers
-	userHandler := api.NewUserHandler(userStore, logger, jwtManager)
-	projectHandler := api.NewProjectHandler(projectStore, userStore, logger)
-	workSessionHandler := api.NewWorkSessionHandler(workSessionStore, userStore, logger, middleware.Middleware{JWT: jwtManager},rds)
-	tokenHandler := api.NewTokenHandler(userStore, jwtManager, logger)
-	statusHandler := api.NewStatusHandler(statusStore)
-	resetTokenHandler := api.NewResetTokenHandler(resetTokenStore, userStore, logger)
-
-	
 	// Middleware (depends on auth only)
 	mw := &middleware.Middleware{JWT: jwtManager}
 
-	
-
+	// Handlers
+	userHandler := api.NewUserHandler(userStore, logger, jwtManager)
+	projectHandler := api.NewProjectHandler(projectStore, userStore, logger)
+	workSessionHandler := api.NewWorkSessionHandler(
+		workSessionStore,
+		userStore,
+		logger,
+		middleware.Middleware{JWT: jwtManager},
+		rds,
+	)
+	tokenHandler := api.NewTokenHandler(userStore, jwtManager, logger)
+	statusHandler := api.NewStatusHandler(statusStore)
+	resetTokenHandler := api.NewResetTokenHandler(resetTokenStore, userStore, logger)
+	batchHandler := api.NewBatchHandler(batchStore, logger, middleware.Middleware{JWT: jwtManager}) // ✅ ADD
 
 	app := &Application{
 		Logger:             logger,
@@ -72,10 +79,9 @@ func NewApplication() (*Application, error) {
 		StatusHandler:      statusHandler,
 		TokenHandler:       tokenHandler,
 		ResetTokenHandler:  resetTokenHandler,
+		BatchHandler:       batchHandler, // ✅ ADD
 		Middleware:         mw,
 		JWT:                jwtManager,
-
-
 	}
 
 	return app, nil

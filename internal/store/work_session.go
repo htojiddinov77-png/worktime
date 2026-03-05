@@ -57,6 +57,9 @@ type WorkSessionFilter struct {
 	ProjectID *int64
 	Active    *bool
 	Search    *string
+
+	From *time.Time
+	To   *time.Time
 }
 
 type SummaryRangeFilter struct {
@@ -117,11 +120,31 @@ type UserSummary struct {
 	Projects []ProjectSummary `json:"projects,omitempty"`
 }
 
+type BatchCandidateSession struct {
+	ID       int64     `json:"id"`
+	UserID   int64     `json:"user_id"`
+	UserName string    `json:"user_name"`
+	StartAt  time.Time `json:"start_at"`
+	EndAt    time.Time `json:"end_at"`
+	Seconds  int64     `json:"seconds"`
+	Note     string    `json:"note"`
+}
+
+type BatchCandidatesFilter struct {
+	ProjectID int64
+	From      time.Time
+	To        time.Time
+
+	// optional:
+	Search *string
+}
+
 type WorkSessionStore interface {
 	StartSession(ctx context.Context, ws *WorkSession) error
-	StopSession(ctx context.Context, sessionID, userID int64) (error)
+	StopSession(ctx context.Context, sessionID, userID int64) error
 	GetSummaryReport(ctx context.Context, filter SummaryRangeFilter) (*SummaryReport, error)
 	ListSessions(ctx context.Context, filter WorkSessionFilter) ([]WorkSessionRow, int, error)
+	ListBatchCandidates(ctx context.Context, f BatchCandidatesFilter) ([]BatchCandidateSession, int, error)
 }
 
 func (pg *PostgresWorkSessionStore) StartSession(ctx context.Context, ws *WorkSession) error {
@@ -155,7 +178,6 @@ func (pg *PostgresWorkSessionStore) StopSession(ctx context.Context, sessionID, 
 		  )
 	`
 
-
 	_, err := pg.db.ExecContext(ctx, query, sessionID, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -166,7 +188,6 @@ func (pg *PostgresWorkSessionStore) StopSession(ctx context.Context, sessionID, 
 
 	return nil
 }
-
 
 func (pg *PostgresWorkSessionStore) ListSessions(ctx context.Context, filter WorkSessionFilter) ([]WorkSessionRow, int, error) {
 	limit := filter.Limit()
@@ -481,4 +502,112 @@ func formatDuration(seconds float64) string {
 	secs := totalSeconds % 60
 
 	return fmt.Sprintf("%d days, %02d:%02d:%02d", days, hours, minutes, secs)
+}
+
+func (pg *PostgresWorkSessionStore) ListBatchCandidates(
+	ctx context.Context,
+	f BatchCandidatesFilter,
+) ([]BatchCandidateSession, int, error) {
+
+	// basic validation
+	if f.ProjectID <= 0 {
+		return nil, 0, errors.New("project_id must be positive")
+	}
+	if f.From.IsZero() || f.To.IsZero() {
+		return nil, 0, errors.New("from and to are required")
+	}
+	if !f.From.Before(f.To) {
+		return nil, 0, errors.New("from must be before to")
+	}
+
+	search := ""
+	if f.Search != nil {
+		search = strings.TrimSpace(*f.Search)
+	}
+
+	// IMPORTANT:
+	// - end_at IS NOT NULL means ended sessions only
+	// - LEFT JOIN batch_items + bi.session_id IS NULL means "not already batched"
+	//
+	// About date range:
+	// We use ws.start_at >= from AND ws.start_at < to
+	// This avoids edge issues and works well if you pass "to" as next day 00:00:00Z.
+	query := `
+	SELECT
+		COUNT(*) OVER() AS total_records,
+		ws.id AS session_id,
+
+		u.id   AS user_id,
+		u.name AS user_name,
+
+		ws.start_at,
+		ws.end_at,
+		EXTRACT(EPOCH FROM (ws.end_at - ws.start_at))::BIGINT AS seconds,
+		COALESCE(ws.note, '') AS note
+	FROM work_sessions ws
+	JOIN users u ON u.id = ws.user_id
+
+	LEFT JOIN batch_items bi ON bi.session_id = ws.id
+
+	WHERE
+		ws.project_id = $1
+		AND ws.end_at IS NOT NULL
+		AND ws.start_at >= $2
+		AND ws.start_at <  $3
+		AND bi.session_id IS NULL
+		AND (
+			$4 = '' OR (
+				u.name ILIKE $4 || '%%' OR
+				u.email ILIKE $4 || '%%' OR
+				COALESCE(ws.note,'') ILIKE $4 || '%%'
+			)
+		)
+
+	ORDER BY ws.start_at DESC, ws.id DESC;
+	`
+
+	rows, err := pg.db.QueryContext(
+		ctx,
+		query,
+		f.ProjectID,
+		f.From,
+		f.To,
+		search,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := make([]BatchCandidateSession, 0)
+	total := 0
+
+	for rows.Next() {
+		var (
+			row          BatchCandidateSession
+			totalRecords int
+		)
+
+		if err := rows.Scan(
+			&totalRecords,
+			&row.ID,
+			&row.UserID,
+			&row.UserName,
+			&row.StartAt,
+			&row.EndAt,
+			&row.Seconds,
+			&row.Note,
+		); err != nil {
+			return nil, 0, err
+		}
+
+		total = totalRecords
+		out = append(out, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	return out, total, nil
 }
